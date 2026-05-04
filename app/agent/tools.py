@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from agents import RunContextWrapper, function_tool
 
@@ -11,6 +11,30 @@ from app.whatsapp.client import (
     send_text_reply,
 )
 from app.whatsapp.payloads import InteractiveButtonsPayload, InteractiveListPayload
+
+Section = Literal[
+    "overview",
+    "services",
+    "hours",
+    "pricing",
+    "insurance",
+    "faqs",
+    "booking",
+    "contact",
+    "all",
+]
+
+
+@function_tool
+async def get_business_details(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    section: Annotated[
+        Section,
+        "Which slice of business info to return (full pricing, hours, FAQs, etc.).",
+    ],
+) -> str:
+    """Return structured business knowledge for the assistant; does not message the user."""
+    return wrapper.context.business.section(section)
 
 
 @function_tool

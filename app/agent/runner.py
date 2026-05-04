@@ -25,7 +25,7 @@ async def run_whatsapp_turn(
 
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY.strip()
 
-    agent = create_whatsapp_agent(model=OPENAI_AGENT_MODEL)
+    agent = create_whatsapp_agent(model=OPENAI_AGENT_MODEL, business=context.business)
     result = await Runner.run(
         starting_agent=agent,
         input=user_prompt,
