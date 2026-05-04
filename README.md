@@ -22,6 +22,11 @@ export $(grep -v '^#' .env | xargs)   # or set variables manually on Windows
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+VENV setup : 
+```
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+```
+
 For Meta to reach your machine, expose HTTPS (e.g. [ngrok](https://ngrok.com)) and set the callback URL to `https://<public-host>/webhook`.
 
 ## Render.com
