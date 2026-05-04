@@ -1,9 +1,17 @@
+import logging
 import os
 
 GRAPH_API_VERSION = "v21.0"
+
+_LOG_LEVEL_NAME = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_LEVEL = getattr(logging, _LOG_LEVEL_NAME, logging.INFO)
 PROCESSED_IDS_MAX = 2000
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "")
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")
+
+# Optional: published WhatsApp Flow for interactive forms (multi-select, etc.).
+WHATSAPP_FLOW_ID = os.getenv("WHATSAPP_FLOW_ID", "")
+WHATSAPP_FLOW_SCREEN = os.getenv("WHATSAPP_FLOW_SCREEN", "")

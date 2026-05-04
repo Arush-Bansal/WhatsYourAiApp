@@ -4,10 +4,18 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 
+from app.config import LOG_LEVEL
+from app.request_logging import RequestLoggingMiddleware
 from app.routes.root import router as root_router
 from app.routes.webhook import router as webhook_router
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
@@ -18,6 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan, title="WhatsApp webhook")
+app.add_middleware(RequestLoggingMiddleware)
 app.include_router(root_router)
 app.include_router(webhook_router)
 
