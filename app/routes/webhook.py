@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -14,6 +15,7 @@ from app.agent import (
 from app.config import VERIFY_TOKEN
 from app.dedupe import already_processed, mark_processed
 from app.security import verify_meta_signature
+from app.whatsapp.client import send_text_reply
 from app.whatsapp.parser import (
     iter_incoming_button_replies,
     iter_incoming_list_replies,
@@ -23,6 +25,20 @@ from app.whatsapp.parser import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _dispatch_result(
+    result: Any,
+    http: httpx.AsyncClient,
+    phone_number_id: str,
+    to_wa_id: str,
+) -> None:
+    """Send final_output as a text message when the agent skipped the send tool."""
+    if result is None:
+        return
+    text = getattr(result, "final_output", None)
+    if text and isinstance(text, str):
+        await send_text_reply(http, phone_number_id, to_wa_id, text)
 
 
 @router.get("/webhook")
@@ -66,7 +82,8 @@ async def receive_webhook(request: Request) -> dict[str, str]:
             to_wa_id=from_wa_id,
         )
         prompt = prompt_for_button_reply(bid, title)
-        await run_whatsapp_turn(context=ctx, user_prompt=prompt)
+        result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
+        await _dispatch_result(result, http, phone_number_id, from_wa_id)
 
     for (
         message_id,
@@ -85,7 +102,8 @@ async def receive_webhook(request: Request) -> dict[str, str]:
             to_wa_id=from_wa_id,
         )
         prompt = prompt_for_list_reply(row_id, title, description)
-        await run_whatsapp_turn(context=ctx, user_prompt=prompt)
+        result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
+        await _dispatch_result(result, http, phone_number_id, from_wa_id)
 
     for message_id, from_wa_id, text_body, phone_number_id in iter_incoming_text_messages(
         data
@@ -99,6 +117,7 @@ async def receive_webhook(request: Request) -> dict[str, str]:
             to_wa_id=from_wa_id,
         )
         prompt = prompt_for_text_message(text_body)
-        await run_whatsapp_turn(context=ctx, user_prompt=prompt)
+        result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
+        await _dispatch_result(result, http, phone_number_id, from_wa_id)
 
     return {"status": "ok"}
