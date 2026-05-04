@@ -1,6 +1,6 @@
 # WhatsApp webhook (Render)
 
-Minimal **FastAPI** service for the [WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api): verify webhook, reply **hi** when a user sends **hi**, plus **`GET /wake`** to wake a sleeping [Render](https://render.com) instance.
+Minimal **FastAPI** service for the [WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api): verify webhook, echo every incoming **text** message as `You typed: "<their message>"`, plus **`GET /wake`** to wake a sleeping [Render](https://render.com) instance.
 
 ## Endpoints
 
@@ -9,7 +9,7 @@ Minimal **FastAPI** service for the [WhatsApp Cloud API](https://developers.face
 | `GET` | `/` | JSON with links to `/wake` and `/webhook` |
 | `GET` | `/wake` | Fast 200 — use before testing WhatsApp on free/sleeping tiers |
 | `GET` | `/webhook` | Meta subscription verification (`hub.mode`, `hub.verify_token`, `hub.challenge`) |
-| `POST` | `/webhook` | Incoming WhatsApp events; replies with **hi** for incoming text **hi** (case-insensitive) |
+| `POST` | `/webhook` | Incoming WhatsApp events; for each incoming **text** message, replies `You typed: "<body>"` |
 
 ## Local setup
 

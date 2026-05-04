@@ -157,9 +157,7 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         _processed_message_ids.add(message_id)
         _trim_processed_ids()
 
-        if text_body.strip().lower() != "hi":
-            continue
-
-        await _send_text_reply(http, phone_number_id, from_wa_id, "hi")
+        reply = f'You typed: "{text_body}"'
+        await _send_text_reply(http, phone_number_id, from_wa_id, reply)
 
     return {"status": "ok"}
