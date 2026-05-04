@@ -9,13 +9,11 @@ from app.dedupe import already_processed, mark_processed
 from app.security import verify_meta_signature
 from app.whatsapp.client import (
     send_interactive_buttons_reply,
-    send_interactive_flow_reply,
     send_interactive_list_reply,
     send_text_reply,
 )
 from app.whatsapp.parser import (
     iter_incoming_button_replies,
-    iter_incoming_flow_nfm_replies,
     iter_incoming_list_replies,
     iter_incoming_text_messages,
 )
@@ -82,16 +80,6 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         ack = " ".join(parts) + "."
         await send_text_reply(http, phone_number_id, from_wa_id, ack)
 
-    for message_id, from_wa_id, response_json, phone_number_id in iter_incoming_flow_nfm_replies(
-        data
-    ):
-        if already_processed(message_id):
-            continue
-        mark_processed(message_id)
-        preview = response_json[:600] + ("…" if len(response_json) > 600 else "")
-        ack = f"Flow submitted. Data: {preview}" if preview else "Flow submitted."
-        await send_text_reply(http, phone_number_id, from_wa_id, ack)
-
     for message_id, from_wa_id, text_body, phone_number_id in iter_incoming_text_messages(
         data
     ):
@@ -107,30 +95,13 @@ async def receive_webhook(request: Request) -> dict[str, str]:
                 from_wa_id,
                 body_text="Here are quick-reply buttons. Tap one.",
             )
-        elif cmd in ("list", "dropdown"):
+        elif cmd in ("list", "dropdown", "form"):
             await send_interactive_list_reply(
                 http,
                 phone_number_id,
                 from_wa_id,
                 body_text="Tap the button to open the list (dropdown-style). Pick one row.",
             )
-        elif cmd == "form":
-            sent = await send_interactive_flow_reply(
-                http,
-                phone_number_id,
-                from_wa_id,
-                body_text="Open the form to answer (including multi-select if your Flow defines it).",
-            )
-            if not sent:
-                await send_interactive_list_reply(
-                    http,
-                    phone_number_id,
-                    from_wa_id,
-                    body_text=(
-                        "No Flow configured (set WHATSAPP_FLOW_ID and WHATSAPP_FLOW_SCREEN). "
-                        "Here is a list picker instead. True multi-select needs a Flow with CheckboxGroup."
-                    ),
-                )
         else:
             reply = f'You typed: "{text_body}"'
             await send_text_reply(http, phone_number_id, from_wa_id, reply)
