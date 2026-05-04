@@ -4,6 +4,10 @@ from typing import Any
 import httpx
 
 from app.config import GRAPH_API_VERSION, WHATSAPP_ACCESS_TOKEN
+from app.whatsapp.payloads import (
+    InteractiveButtonsPayload,
+    InteractiveListPayload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13,10 +17,10 @@ async def send_text_reply(
     phone_number_id: str,
     to_wa_id: str,
     body: str,
-) -> None:
+) -> bool:
     if not WHATSAPP_ACCESS_TOKEN:
         logger.error("WHATSAPP_ACCESS_TOKEN is not set; cannot send reply")
-        return
+        return False
     url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
     payload = {
         "messaging_product": "whatsapp",
@@ -32,106 +36,95 @@ async def send_text_reply(
             resp.status_code,
             resp.text[:500],
         )
+        return False
+    return True
+
+
+def _buttons_to_graph_action(payload: InteractiveButtonsPayload) -> dict[str, Any]:
+    return {
+        "buttons": [
+            {"type": "reply", "reply": {"id": b.id, "title": b.title}}
+            for b in payload.buttons
+        ]
+    }
+
+
+def _list_to_graph_action(payload: InteractiveListPayload) -> dict[str, Any]:
+    sections_out: list[dict[str, Any]] = []
+    for sec in payload.sections:
+        row_objs: list[dict[str, Any]] = []
+        for row in sec.rows:
+            r: dict[str, Any] = {"id": row.id, "title": row.title}
+            if row.description:
+                r["description"] = row.description
+            row_objs.append(r)
+        sections_out.append(
+            {
+                "title": sec.title if sec.title else " ",
+                "rows": row_objs,
+            }
+        )
+    return {
+        "button": payload.button_label,
+        "sections": sections_out,
+    }
 
 
 async def send_interactive_buttons_reply(
     http: httpx.AsyncClient,
     phone_number_id: str,
     to_wa_id: str,
-    body_text: str = "Tap a button - demo reply.",
-) -> None:
+    payload: InteractiveButtonsPayload,
+) -> bool:
     if not WHATSAPP_ACCESS_TOKEN:
         logger.error("WHATSAPP_ACCESS_TOKEN is not set; cannot send reply")
-        return
+        return False
     url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
-    payload: dict[str, Any] = {
+    graph_payload: dict[str, Any] = {
         "messaging_product": "whatsapp",
         "to": to_wa_id,
         "type": "interactive",
         "interactive": {
             "type": "button",
-            "body": {"text": body_text},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": "demo_ok", "title": "Sounds good"}},
-                    {"type": "reply", "reply": {"id": "demo_later", "title": "Not now"}},
-                    {"type": "reply", "reply": {"id": "demo_info", "title": "More info"}},
-                ]
-            },
+            "body": {"text": payload.body_text},
+            "action": _buttons_to_graph_action(payload),
         },
     }
     headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
-    resp = await http.post(url, json=payload, headers=headers)
+    resp = await http.post(url, json=graph_payload, headers=headers)
     if resp.status_code >= 400:
         logger.error(
             "Graph API error (interactive): %s %s",
             resp.status_code,
             resp.text[:500],
         )
+        return False
+    return True
 
 
 async def send_interactive_list_reply(
     http: httpx.AsyncClient,
     phone_number_id: str,
     to_wa_id: str,
-    body_text: str = "Open the list and pick one option.",
+    payload: InteractiveListPayload,
 ) -> bool:
     """Send a list message (tap the button to open the list sheet — dropdown-style)."""
     if not WHATSAPP_ACCESS_TOKEN:
         logger.error("WHATSAPP_ACCESS_TOKEN is not set; cannot send reply")
         return False
     url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
-    payload: dict[str, Any] = {
+    graph_payload: dict[str, Any] = {
         "messaging_product": "whatsapp",
         "to": to_wa_id,
         "type": "interactive",
         "interactive": {
             "type": "list",
-            "body": {"text": body_text},
-            "action": {
-                "button": "Choose option",
-                "sections": [
-                    {
-                        "title": "Topics",
-                        "rows": [
-                            {
-                                "id": "list_billing",
-                                "title": "Billing",
-                                "description": "Invoices and payments",
-                            },
-                            {
-                                "id": "list_support",
-                                "title": "Support",
-                                "description": "Help with the product",
-                            },
-                            {
-                                "id": "list_feedback",
-                                "title": "Feedback",
-                                "description": "Ideas and issues",
-                            },
-                        ],
-                    },
-                    {
-                        "title": "Priority",
-                        "rows": [
-                            {
-                                "id": "list_urgent",
-                                "title": "Urgent",
-                                "description": "Needs a fast reply",
-                            },
-                            {
-                                "id": "list_normal",
-                                "title": "Normal",
-                                "description": "Whenever you can",
-                            },
-                        ],
-                    },
-                ],
-            },
+            "body": {"text": payload.body_text},
+            "action": _list_to_graph_action(payload),
         },
     }
     headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
-    resp = await http.post(url, json=payload, headers=headers)
+    resp = await http.post(url, json=graph_payload, headers=headers)
     if resp.status_code >= 400:
         logger.error(
             "Graph API error (interactive list): %s %s",

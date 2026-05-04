@@ -4,14 +4,16 @@ import logging
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
+from app.agent import (
+    WhatsAppAgentContext,
+    prompt_for_button_reply,
+    prompt_for_list_reply,
+    prompt_for_text_message,
+    run_whatsapp_turn,
+)
 from app.config import VERIFY_TOKEN
 from app.dedupe import already_processed, mark_processed
 from app.security import verify_meta_signature
-from app.whatsapp.client import (
-    send_interactive_buttons_reply,
-    send_interactive_list_reply,
-    send_text_reply,
-)
 from app.whatsapp.parser import (
     iter_incoming_button_replies,
     iter_incoming_list_replies,
@@ -58,8 +60,13 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         if already_processed(message_id):
             continue
         mark_processed(message_id)
-        ack = f'You tapped "{title}"' + (f" (id: {bid})" if bid else "") + "."
-        await send_text_reply(http, phone_number_id, from_wa_id, ack)
+        ctx = WhatsAppAgentContext(
+            http=http,
+            phone_number_id=phone_number_id,
+            to_wa_id=from_wa_id,
+        )
+        prompt = prompt_for_button_reply(bid, title)
+        await run_whatsapp_turn(context=ctx, user_prompt=prompt)
 
     for (
         message_id,
@@ -72,13 +79,13 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         if already_processed(message_id):
             continue
         mark_processed(message_id)
-        parts = [f'You picked list row "{title}"']
-        if row_id:
-            parts.append(f"(id: {row_id})")
-        if description:
-            parts.append(f"— {description}")
-        ack = " ".join(parts) + "."
-        await send_text_reply(http, phone_number_id, from_wa_id, ack)
+        ctx = WhatsAppAgentContext(
+            http=http,
+            phone_number_id=phone_number_id,
+            to_wa_id=from_wa_id,
+        )
+        prompt = prompt_for_list_reply(row_id, title, description)
+        await run_whatsapp_turn(context=ctx, user_prompt=prompt)
 
     for message_id, from_wa_id, text_body, phone_number_id in iter_incoming_text_messages(
         data
@@ -86,24 +93,12 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         if already_processed(message_id):
             continue
         mark_processed(message_id)
-
-        cmd = text_body.strip().lower()
-        if cmd == "buttons":
-            await send_interactive_buttons_reply(
-                http,
-                phone_number_id,
-                from_wa_id,
-                body_text="Here are quick-reply buttons. Tap one.",
-            )
-        elif cmd in ("list", "dropdown", "form"):
-            await send_interactive_list_reply(
-                http,
-                phone_number_id,
-                from_wa_id,
-                body_text="Tap the button to open the list (dropdown-style). Pick one row.",
-            )
-        else:
-            reply = f'You typed: "{text_body}"'
-            await send_text_reply(http, phone_number_id, from_wa_id, reply)
+        ctx = WhatsAppAgentContext(
+            http=http,
+            phone_number_id=phone_number_id,
+            to_wa_id=from_wa_id,
+        )
+        prompt = prompt_for_text_message(text_body)
+        await run_whatsapp_turn(context=ctx, user_prompt=prompt)
 
     return {"status": "ok"}
