@@ -12,14 +12,16 @@ from app.agent import (
     prompt_for_text_message,
     run_whatsapp_turn,
 )
+from app.agent.voice_transcribe import transcribe_voice_to_hinglish
 from app.config import VERIFY_TOKEN
 from app.dedupe import already_processed, mark_processed
 from app.security import verify_meta_signature
-from app.whatsapp.client import send_text_reply
+from app.whatsapp.client import download_whatsapp_media, send_text_reply
 from app.whatsapp.parser import (
     iter_incoming_button_replies,
     iter_incoming_list_replies,
     iter_incoming_text_messages,
+    iter_incoming_voice_notes,
 )
 
 logger = logging.getLogger(__name__)
@@ -117,6 +119,46 @@ async def receive_webhook(request: Request) -> dict[str, str]:
             to_wa_id=from_wa_id,
         )
         prompt = prompt_for_text_message(text_body)
+        result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
+        await _dispatch_result(result, http, phone_number_id, from_wa_id)
+
+    for message_id, from_wa_id, media_id, phone_number_id in iter_incoming_voice_notes(
+        data
+    ):
+        if already_processed(message_id):
+            continue
+        mark_processed(message_id)
+        ctx = WhatsAppAgentContext(
+            http=http,
+            phone_number_id=phone_number_id,
+            to_wa_id=from_wa_id,
+        )
+        downloaded = await download_whatsapp_media(http, media_id)
+        if downloaded is None:
+            await send_text_reply(
+                http,
+                phone_number_id,
+                from_wa_id,
+                "Sorry, I couldn't download your voice note. Please try again.",
+            )
+            continue
+        audio_bytes, mime_type = downloaded
+        hinglish = await transcribe_voice_to_hinglish(audio_bytes, mime_type)
+        if hinglish is None:
+            await send_text_reply(
+                http,
+                phone_number_id,
+                from_wa_id,
+                "Sorry, I couldn't transcribe your voice note. Please try again or send a text message.",
+            )
+            continue
+        await send_text_reply(
+            http,
+            phone_number_id,
+            from_wa_id,
+            f"Transcription:\n{hinglish}",
+        )
+        prompt = prompt_for_text_message(hinglish)
         result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
         await _dispatch_result(result, http, phone_number_id, from_wa_id)
 

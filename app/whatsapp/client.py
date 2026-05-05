@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 
@@ -38,6 +39,46 @@ async def send_text_reply(
         )
         return False
     return True
+
+
+async def download_whatsapp_media(
+    http: httpx.AsyncClient,
+    media_id: str,
+) -> tuple[bytes, str | None] | None:
+    """Resolve media_id via Graph API and download bytes. Returns (body, mime_type) or None on failure."""
+    if not WHATSAPP_ACCESS_TOKEN:
+        logger.error("WHATSAPP_ACCESS_TOKEN is not set; cannot download media")
+        return None
+    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+    meta_url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}"
+    meta_resp = await http.get(meta_url, headers=headers)
+    if meta_resp.status_code >= 400:
+        logger.error(
+            "Graph API media metadata error: %s %s",
+            meta_resp.status_code,
+            meta_resp.text[:500],
+        )
+        return None
+    try:
+        meta = meta_resp.json()
+    except json.JSONDecodeError:
+        logger.error("Graph API media metadata: invalid JSON")
+        return None
+    download_url = meta.get("url")
+    if not download_url or not isinstance(download_url, str):
+        logger.error("Graph API media metadata: missing url")
+        return None
+    mime_type = meta.get("mime_type")
+    mime_str = str(mime_type) if mime_type else None
+    bin_resp = await http.get(download_url, headers=headers)
+    if bin_resp.status_code >= 400:
+        logger.error(
+            "Graph API media download error: %s %s",
+            bin_resp.status_code,
+            bin_resp.text[:500],
+        )
+        return None
+    return (bin_resp.content, mime_str)
 
 
 def _buttons_to_graph_action(payload: InteractiveButtonsPayload) -> dict[str, Any]:
