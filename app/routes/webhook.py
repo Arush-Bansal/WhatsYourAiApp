@@ -32,15 +32,16 @@ router = APIRouter()
 async def _dispatch_result(
     result: Any,
     http: httpx.AsyncClient,
-    phone_number_id: str,
-    to_wa_id: str,
+    ctx: WhatsAppAgentContext,
 ) -> None:
     """Send final_output as a text message when the agent skipped the send tool."""
+    if ctx.reply_sent:
+        return
     if result is None:
         return
     text = getattr(result, "final_output", None)
     if text and isinstance(text, str):
-        await send_text_reply(http, phone_number_id, to_wa_id, text)
+        await send_text_reply(http, ctx.phone_number_id, ctx.to_wa_id, text)
 
 
 @router.get("/webhook")
@@ -85,7 +86,7 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         )
         prompt = prompt_for_button_reply(bid, title)
         result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
-        await _dispatch_result(result, http, phone_number_id, from_wa_id)
+        await _dispatch_result(result, http, ctx)
 
     for (
         message_id,
@@ -105,7 +106,7 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         )
         prompt = prompt_for_list_reply(row_id, title, description)
         result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
-        await _dispatch_result(result, http, phone_number_id, from_wa_id)
+        await _dispatch_result(result, http, ctx)
 
     for message_id, from_wa_id, text_body, phone_number_id in iter_incoming_text_messages(
         data
@@ -120,7 +121,7 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         )
         prompt = prompt_for_text_message(text_body)
         result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
-        await _dispatch_result(result, http, phone_number_id, from_wa_id)
+        await _dispatch_result(result, http, ctx)
 
     for message_id, from_wa_id, media_id, phone_number_id in iter_incoming_voice_notes(
         data
@@ -160,6 +161,6 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         )
         prompt = prompt_for_text_message(hinglish)
         result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
-        await _dispatch_result(result, http, phone_number_id, from_wa_id)
+        await _dispatch_result(result, http, ctx)
 
     return {"status": "ok"}

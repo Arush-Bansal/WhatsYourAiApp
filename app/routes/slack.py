@@ -36,8 +36,11 @@ async def _dispatch_slack_result(
     result: Any,
     http: httpx.AsyncClient,
     channel_id: str,
+    ctx: SlackAgentContext,
 ) -> None:
     """Send final_output as a text message when the agent skipped the send tool."""
+    if ctx.reply_sent:
+        return
     if result is None:
         return
     text = getattr(result, "final_output", None)
@@ -54,7 +57,7 @@ async def _process_dm_text(
     ctx = SlackAgentContext(http=http, channel_id=channel_id, user_id=user_id)
     prompt = prompt_for_text_message(text_body)
     result = await run_slack_turn(context=ctx, user_prompt=prompt)
-    await _dispatch_slack_result(result, http, channel_id)
+    await _dispatch_slack_result(result, http, channel_id, ctx)
 
 
 async def _process_audio_file(
@@ -84,7 +87,7 @@ async def _process_audio_file(
     await send_text_reply(http, channel_id, f"Transcription:\n{hinglish}")
     prompt = prompt_for_text_message(hinglish)
     result = await run_slack_turn(context=ctx, user_prompt=prompt)
-    await _dispatch_slack_result(result, http, channel_id)
+    await _dispatch_slack_result(result, http, channel_id, ctx)
 
 
 async def _process_button_action(
@@ -102,7 +105,7 @@ async def _process_button_action(
     ctx = SlackAgentContext(http=http, channel_id=channel_id, user_id=user_id)
     prompt = prompt_for_slack_button_action(action_id, button_text, value)
     result = await run_slack_turn(context=ctx, user_prompt=prompt)
-    await _dispatch_slack_result(result, http, channel_id)
+    await _dispatch_slack_result(result, http, channel_id, ctx)
 
 
 async def _process_select_action(
@@ -120,16 +123,10 @@ async def _process_select_action(
     ctx = SlackAgentContext(http=http, channel_id=channel_id, user_id=user_id)
     prompt = prompt_for_slack_menu_selection(action_id, option_value, option_text)
     result = await run_slack_turn(context=ctx, user_prompt=prompt)
-    await _dispatch_slack_result(result, http, channel_id)
+    await _dispatch_slack_result(result, http, channel_id, ctx)
 
 
 async def _handle_event_callback(http: httpx.AsyncClient, data: dict[str, Any]) -> None:
-    event_id = str(data.get("event_id") or "")
-    if event_id:
-        if already_processed(event_id):
-            return
-        mark_processed(event_id)
-
     for _event_id, channel_id, user_id, text_body in iter_incoming_dm_text(data):
         await _process_dm_text(http, channel_id, user_id, text_body)
 
@@ -196,6 +193,11 @@ async def slack_events(request: Request) -> Response | dict[str, str]:
         return {"challenge": str(challenge)}
 
     if data.get("type") == "event_callback":
+        event_id = str(data.get("event_id") or "")
+        if event_id:
+            if already_processed(event_id):
+                return {"status": "ok"}
+            mark_processed(event_id)
         http: httpx.AsyncClient = request.app.state.http
         _schedule_background(_handle_event_callback(http, data))
         return {"status": "ok"}

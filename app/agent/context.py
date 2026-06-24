@@ -19,6 +19,7 @@ class WhatsAppAgentContext(BaseAgentContext):
 
     phone_number_id: str = ""
     to_wa_id: str = ""
+    reply_sent: bool = False
 
 
 @dataclass
@@ -27,3 +28,4 @@ class SlackAgentContext(BaseAgentContext):
 
     channel_id: str = ""
     user_id: str = ""
+    reply_sent: bool = False

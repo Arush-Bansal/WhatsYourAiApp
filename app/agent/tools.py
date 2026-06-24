@@ -45,6 +45,8 @@ async def send_whatsapp_text(
     """Send a plain WhatsApp text message to the current user."""
     c = wrapper.context
     ok = await send_text_reply(c.http, c.phone_number_id, c.to_wa_id, body)
+    if ok:
+        c.reply_sent = True
     return "ok:text_sent" if ok else "error:text_not_sent"
 
 
@@ -58,6 +60,8 @@ async def send_whatsapp_interactive_buttons(
     ok = await send_interactive_buttons_reply(
         c.http, c.phone_number_id, c.to_wa_id, payload
     )
+    if ok:
+        c.reply_sent = True
     return "ok:buttons_sent" if ok else "error:buttons_not_sent"
 
 
@@ -71,4 +75,6 @@ async def send_whatsapp_interactive_list(
     ok = await send_interactive_list_reply(
         c.http, c.phone_number_id, c.to_wa_id, payload
     )
+    if ok:
+        c.reply_sent = True
     return "ok:list_sent" if ok else "error:list_not_sent"

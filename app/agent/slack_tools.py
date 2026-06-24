@@ -21,6 +21,8 @@ async def send_slack_text(
     """Send a plain Slack message to the current user."""
     c = wrapper.context
     ok = await send_text_reply(c.http, c.channel_id, body)
+    if ok:
+        c.reply_sent = True
     return "ok:text_sent" if ok else "error:text_not_sent"
 
 
@@ -32,6 +34,8 @@ async def send_slack_interactive_buttons(
     """Send an interactive button message (1–5 buttons)."""
     c = wrapper.context
     ok = await send_interactive_buttons_reply(c.http, c.channel_id, payload)
+    if ok:
+        c.reply_sent = True
     return "ok:buttons_sent" if ok else "error:buttons_not_sent"
 
 
@@ -43,4 +47,6 @@ async def send_slack_interactive_menu(
     """Send an interactive select menu (max 10 options)."""
     c = wrapper.context
     ok = await send_interactive_menu_reply(c.http, c.channel_id, payload)
+    if ok:
+        c.reply_sent = True
     return "ok:menu_sent" if ok else "error:menu_not_sent"
