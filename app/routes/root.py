@@ -6,9 +6,11 @@ router = APIRouter()
 @router.get("/")
 async def root() -> dict[str, str]:
     return {
-        "service": "whatsapp-webhook",
+        "service": "whatsapp-slack-webhook",
         "wake": "/wake",
         "webhook": "/webhook",
+        "slack_events": "/slack/events",
+        "slack_interactions": "/slack/interactions",
     }
 
 

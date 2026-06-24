@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from agents import RunContextWrapper, function_tool
 
-from app.agent.context import WhatsAppAgentContext
+from app.agent.context import BaseAgentContext, WhatsAppAgentContext
 from app.whatsapp.client import (
     send_interactive_buttons_reply,
     send_interactive_list_reply,
@@ -27,7 +27,7 @@ Section = Literal[
 
 @function_tool
 async def get_business_details(
-    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    wrapper: RunContextWrapper[BaseAgentContext],
     section: Annotated[
         Section,
         "Which slice of business info to return (full pricing, hours, FAQs, etc.).",
