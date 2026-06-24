@@ -13,6 +13,7 @@ async def root() -> dict[str, str]:
         "slack_interactions": "/slack/interactions",
         "gmail_push": "/gmail/push",
         "gmail_watch": "/gmail/watch",
+        "gmail_sync": "/gmail/sync",
     }
 
 

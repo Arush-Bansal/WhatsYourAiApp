@@ -147,6 +147,24 @@ async def send_reply(
     return True
 
 
+async def get_profile_history_id(http: httpx.AsyncClient) -> str | None:
+    headers = _auth_headers()
+    if headers is None:
+        return None
+
+    resp = await http.get(f"{GMAIL_API_BASE}/profile", headers=headers)
+    if resp.status_code >= 400:
+        logger.error("Gmail profile error: %s %s", resp.status_code, resp.text[:500])
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        logger.error("Gmail profile: invalid JSON response")
+        return None
+    history_id = data.get("historyId")
+    return str(history_id) if history_id else None
+
+
 async def mark_as_read(http: httpx.AsyncClient, message_id: str) -> bool:
     headers = _auth_headers()
     if headers is None:

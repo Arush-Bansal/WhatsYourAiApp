@@ -12,7 +12,14 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from app.agent import GmailAgentContext, prompt_for_email, run_gmail_turn
 from app.config import GMAIL_MAILBOX_EMAIL
 from app.dedupe import already_processed, mark_processed
-from app.gmail.client import get_message, list_history, mark_as_read, register_watch, send_reply
+from app.gmail.client import (
+    get_message,
+    get_profile_history_id,
+    list_history,
+    mark_as_read,
+    register_watch,
+    send_reply,
+)
 from app.gmail.parser import iter_history_message_ids, parse_incoming_message
 from app.gmail.payloads import GmailReplyPayload
 from app.gmail.state import load_last_history_id, save_last_history_id
@@ -174,3 +181,15 @@ async def gmail_watch(request: Request) -> dict[str, Any]:
         save_last_history_id(history_id)
 
     return {"status": "ok", "historyId": history_id, "expiration": result.get("expiration")}
+
+
+@router.post("/gmail/sync")
+async def gmail_sync(request: Request) -> dict[str, str]:
+    """Manually sync inbox history (e.g. after missed push notifications)."""
+    verify_gmail_watch_secret(request.headers.get("x-gmail-watch-secret"))
+    http: httpx.AsyncClient = request.app.state.http
+    history_id = await get_profile_history_id(http)
+    if not history_id:
+        raise HTTPException(status_code=503, detail="Failed to read Gmail profile historyId")
+    await _sync_history(http, history_id)
+    return {"status": "ok", "historyId": history_id}
