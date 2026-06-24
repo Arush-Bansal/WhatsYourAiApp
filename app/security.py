@@ -4,7 +4,7 @@ import time
 
 from fastapi import HTTPException
 
-from app.config import SLACK_SIGNING_SECRET, WHATSAPP_APP_SECRET
+from app.config import GMAIL_PUSH_AUDIENCE, GMAIL_WATCH_SECRET, SLACK_SIGNING_SECRET, WHATSAPP_APP_SECRET
 
 SLACK_SIGNATURE_MAX_AGE_SECONDS = 60 * 5
 
@@ -52,3 +52,32 @@ def verify_slack_signature(
     )
     if not hmac.compare_digest(expected, signature_header):
         raise HTTPException(status_code=403, detail="Invalid Slack signature")
+
+
+def verify_pubsub_push(authorization_header: str | None) -> None:
+    """Validate the OIDC token sent by Google Pub/Sub push subscriptions."""
+    if not GMAIL_PUSH_AUDIENCE:
+        return
+    if not authorization_header or not authorization_header.startswith("Bearer "):
+        raise HTTPException(status_code=403, detail="Missing or invalid Pub/Sub authorization")
+    token = authorization_header.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=403, detail="Missing Pub/Sub authorization token")
+    try:
+        from google.auth.transport import requests as google_requests
+        from google.oauth2 import id_token
+
+        id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            audience=GMAIL_PUSH_AUDIENCE,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Invalid Pub/Sub token") from exc
+
+
+def verify_gmail_watch_secret(header_value: str | None) -> None:
+    if not GMAIL_WATCH_SECRET:
+        return
+    if not header_value or not hmac.compare_digest(header_value, GMAIL_WATCH_SECRET):
+        raise HTTPException(status_code=403, detail="Invalid Gmail watch secret")

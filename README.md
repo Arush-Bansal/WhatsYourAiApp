@@ -50,3 +50,28 @@ For Meta to reach your machine, expose HTTPS (e.g. [ngrok](https://ngrok.com)) a
 
 - Replies only work inside the usual WhatsApp session window (e.g. user messaged you first). This demo does not send template messages.
 - Temporary Meta tokens expire; use a long-lived or system user token for production.
+
+## Gmail
+
+The service can also monitor a business inbox and reply via the Gmail API + Pub/Sub push.
+
+| Method | Path | Purpose |
+|--------|------|--------|
+| `POST` | `/gmail/push` | Pub/Sub push receiver for new mail notifications |
+| `POST` | `/gmail/watch` | Register or renew Gmail watch (requires `X-Gmail-Watch-Secret` header) |
+
+### Gmail setup
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), enable the **Gmail API**.
+2. Create **OAuth 2.0 Desktop** credentials and set `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET`.
+3. Obtain a refresh token:
+
+   ```bash
+   GMAIL_CLIENT_ID=... GMAIL_CLIENT_SECRET=... python scripts/gmail_oauth_setup.py
+   ```
+
+   Paste the printed `GMAIL_REFRESH_TOKEN` into `.env` along with `GMAIL_MAILBOX_EMAIL`.
+4. Create a **Pub/Sub topic** and a **push subscription** pointing to `https://<host>/gmail/push`.
+5. Grant `gmail-api-push@system.gserviceaccount.com` the **Pub/Sub Publisher** role on the topic.
+6. Set `GMAIL_PUBSUB_TOPIC` (e.g. `projects/my-project/topics/gmail-push`) and `GMAIL_PUSH_AUDIENCE` to your push URL.
+7. After deploy, call `POST /gmail/watch` with header `X-Gmail-Watch-Secret: <GMAIL_WATCH_SECRET>`. Schedule this daily (watch expires in ~7 days).

@@ -28,4 +28,17 @@ class SlackAgentContext(BaseAgentContext):
 
     channel_id: str = ""
     user_id: str = ""
+
+
+@dataclass
+class GmailAgentContext(BaseAgentContext):
+    """Per-run dependencies for Gmail send tools (not sent to the model)."""
+
+    mailbox_email: str = ""
+    thread_id: str = ""
+    message_id: str = ""
+    from_email: str = ""
+    subject: str = ""
+    message_id_header: str = ""
+    references: str = ""
     reply_sent: bool = False

@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.config import LOG_LEVEL
 from app.request_logging import RequestLoggingMiddleware
+from app.routes.gmail import router as gmail_router
 from app.routes.root import router as root_router
 from app.routes.slack import router as slack_router
 from app.routes.webhook import router as webhook_router
@@ -26,10 +27,11 @@ async def lifespan(app: FastAPI):
         yield
 
 
-app = FastAPI(lifespan=lifespan, title="WhatsApp & Slack webhook")
+app = FastAPI(lifespan=lifespan, title="WhatsApp, Slack & Gmail webhook")
 app.add_middleware(RequestLoggingMiddleware)
 app.include_router(root_router)
 app.include_router(webhook_router)
 app.include_router(slack_router)
+app.include_router(gmail_router)
 
 __all__ = ["app"]

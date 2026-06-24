@@ -6,8 +6,8 @@ from typing import Any
 
 from agents import Runner
 
-from app.agent.agent import create_slack_agent, create_whatsapp_agent
-from app.agent.context import SlackAgentContext, WhatsAppAgentContext
+from app.agent.agent import create_gmail_agent, create_slack_agent, create_whatsapp_agent
+from app.agent.context import GmailAgentContext, SlackAgentContext, WhatsAppAgentContext
 from app.config import OPENAI_AGENT_MODEL, OPENAI_API_KEY
 
 logger = logging.getLogger(__name__)
@@ -58,6 +58,31 @@ async def run_slack_turn(
     )
     logger.info(
         "Slack agent run completed; final_output=%r",
+        getattr(result, "final_output", None),
+    )
+    return result
+
+
+async def run_gmail_turn(
+    *,
+    context: GmailAgentContext,
+    user_prompt: str,
+) -> Any | None:
+    """Run the Gmail agent for one inbound user turn. Returns the SDK RunResult or None if skipped."""
+    if not (OPENAI_API_KEY or "").strip():
+        logger.error("OPENAI_API_KEY is not set; skipping agent run")
+        return None
+
+    os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY.strip()
+
+    agent = create_gmail_agent(model=OPENAI_AGENT_MODEL, business=context.business)
+    result = await Runner.run(
+        starting_agent=agent,
+        input=user_prompt,
+        context=context,
+    )
+    logger.info(
+        "Gmail agent run completed; final_output=%r",
         getattr(result, "final_output", None),
     )
     return result

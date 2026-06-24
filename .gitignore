@@ -1,4 +1,5 @@
 .env
+.gmail_state.json
 .venv/
 venv/
 __pycache__/

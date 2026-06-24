@@ -51,3 +51,7 @@ def prompt_for_slack_menu_selection(
         f"option_value={option_value}\n"
         f"option_text={option_text}"
     )
+
+
+def prompt_for_email(from_email: str, subject: str, body: str) -> str:
+    return f"Incoming email from {from_email}\nSubject: {subject}\n\n{body}"
