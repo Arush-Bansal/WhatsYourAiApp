@@ -32,3 +32,18 @@ async def test_upload_and_send_image(monkeypatch):
         assert mid == "MEDIA1"
         assert await client.send_image_reply(http, "PN", "919", mid, "hi")
     assert seen[0][1].startswith("multipart/form-data")
+
+
+@pytest.mark.asyncio
+async def test_typing_indicator_payload(monkeypatch):
+    monkeypatch.setattr(client, "WHATSAPP_ACCESS_TOKEN", "tok")
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(request.content.decode().replace(" ", ""))
+        return httpx.Response(200, json={"success": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        assert await client.send_typing_indicator(http, "PN", "wamid.X")
+        assert not await client.send_typing_indicator(http, "PN", "")
+    assert '"typing_indicator":{"type":"text"}' in bodies[0] and '"message_id":"wamid.X"' in bodies[0]

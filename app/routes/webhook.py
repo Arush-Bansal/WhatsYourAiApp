@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -19,7 +20,7 @@ from app.config import VERIFY_TOKEN
 from app.forms import Completed, handle_incoming
 from app.security import verify_meta_signature
 from app.store import Store
-from app.whatsapp.client import download_whatsapp_media, send_text_reply
+from app.whatsapp.client import download_whatsapp_media, send_text_reply, send_typing_indicator
 from app.whatsapp.parser import (
     iter_incoming_button_replies,
     iter_incoming_list_replies,
@@ -86,6 +87,13 @@ async def receive_webhook(
 
 
 MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024
+TYPING_REFRESH_SECONDS = 20  # WhatsApp clears the indicator after ~25s
+
+
+async def _typing_keepalive(http: httpx.AsyncClient, phone_number_id: str, message_id: str) -> None:
+    while True:
+        await asyncio.sleep(TYPING_REFRESH_SECONDS)
+        await send_typing_indicator(http, phone_number_id, message_id)
 
 
 async def _process_webhook(data: dict[str, Any], http: httpx.AsyncClient, store: Store) -> None:
@@ -109,7 +117,13 @@ async def _run_batch(
         numbered = "\n---\n".join(f"({i}) {it.text}" for i, it in enumerate(items, 1))
         prompt = f"The user sent {len(items)} messages in a row. Read them all, then reply once:\n{numbered}"
     parts = [p for it in items for p in it.parts]
-    await _run_agent(http, store, phone_number_id, wa_id, prompt, parts)
+    last_id = next((it.message_id for it in reversed(items) if it.message_id), "")
+    keepalive = asyncio.create_task(_typing_keepalive(http, phone_number_id, last_id)) if last_id else None
+    try:
+        await _run_agent(http, store, phone_number_id, wa_id, prompt, parts)
+    finally:
+        if keepalive:
+            keepalive.cancel()
 
 
 async def _run_agent(
@@ -170,19 +184,24 @@ def _attachment_item(
 async def _handle_events(data: dict[str, Any], http: httpx.AsyncClient, store: Store) -> None:
     for mid, wa, bid, title, pn in iter_incoming_button_replies(data):
         if await store.claim_message(mid):
-            item = Item(prompt_for_button_reply(bid, title), tap=True)
+            await send_typing_indicator(http, pn, mid)
+            item = Item(prompt_for_button_reply(bid, title), tap=True, message_id=mid)
             await _on_user_input(http, store, pn, wa, "button", bid, title, item)
     for mid, wa, rid, title, desc, pn in iter_incoming_list_replies(data):
         if await store.claim_message(mid):
-            item = Item(prompt_for_list_reply(rid, title, desc), tap=True)
+            await send_typing_indicator(http, pn, mid)
+            item = Item(prompt_for_list_reply(rid, title, desc), tap=True, message_id=mid)
             await _on_user_input(http, store, pn, wa, "list", rid, title, item)
     for mid, wa, text, pn in iter_incoming_text_messages(data):
         if await store.claim_message(mid):
-            await _on_user_input(http, store, pn, wa, "text", text, "", Item(prompt_for_text_message(text)))
+            await send_typing_indicator(http, pn, mid)
+            item = Item(prompt_for_text_message(text), message_id=mid)
+            await _on_user_input(http, store, pn, wa, "text", text, "", item)
 
     for mid, wa, media_id, pn in iter_incoming_voice_notes(data):
         if not await store.claim_message(mid):
             continue
+        await send_typing_indicator(http, pn, mid)
         downloaded = await download_whatsapp_media(http, media_id)
         if downloaded is None:
             await send_text_reply(http, pn, wa, "Sorry, I couldn't download your voice note. Please try again.")
@@ -195,11 +214,14 @@ async def _handle_events(data: dict[str, Any], http: httpx.AsyncClient, store: S
             )
             continue
         await send_text_reply(http, pn, wa, f"Transcription:\n{hinglish}")
-        await _on_user_input(http, store, pn, wa, "text", hinglish, "", Item(prompt_for_text_message(hinglish)))
+        await _on_user_input(
+            http, store, pn, wa, "text", hinglish, "", Item(prompt_for_text_message(hinglish), message_id=mid)
+        )
 
     for mid, wa, media_id, pn, kind, mime, filename, caption in iter_incoming_media(data):
         if not await store.claim_message(mid):
             continue
+        await send_typing_indicator(http, pn, mid)
         downloaded = await download_whatsapp_media(http, media_id)
         if downloaded is None:
             await send_text_reply(http, pn, wa, "Sorry, I couldn't download that file. Please try again.")
@@ -213,4 +235,5 @@ async def _handle_events(data: dict[str, Any], http: httpx.AsyncClient, store: S
         if item is None:
             await send_text_reply(http, pn, wa, "I can read images and PDFs for now. Could you send it as one of those?")
             continue
+        item.message_id = mid
         await _on_user_input(http, store, pn, wa, "attachment", "", "", item)

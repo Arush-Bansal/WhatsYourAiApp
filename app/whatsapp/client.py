@@ -135,6 +135,33 @@ async def send_image_reply(
     return True
 
 
+async def send_typing_indicator(
+    http: httpx.AsyncClient,
+    phone_number_id: str,
+    message_id: str,
+) -> bool:
+    """Mark the user's message as read and show "typing..." (lasts up to ~25s or until we reply)."""
+    if not WHATSAPP_ACCESS_TOKEN or not message_id:
+        return False
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "status": "read",
+        "message_id": message_id,
+        "typing_indicator": {"type": "text"},
+    }
+    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+    try:
+        resp = await http.post(url, json=payload, headers=headers)
+    except httpx.HTTPError:
+        logger.debug("Typing indicator request failed", exc_info=True)
+        return False
+    if resp.status_code >= 400:
+        logger.warning("Typing indicator error: %s %s", resp.status_code, resp.text[:300])
+        return False
+    return True
+
+
 async def send_audio_reply(
     http: httpx.AsyncClient,
     phone_number_id: str,

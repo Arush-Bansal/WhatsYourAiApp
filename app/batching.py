@@ -19,6 +19,7 @@ class Item:
     text: str
     parts: list[dict[str, Any]] = field(default_factory=list)  # attachments as model input parts
     tap: bool = False
+    message_id: str = ""  # WhatsApp message id, used for the typing indicator
 
 
 Runner = Callable[[str, str, list[Item]], Awaitable[None]]  # (wa_id, phone_number_id, items)
