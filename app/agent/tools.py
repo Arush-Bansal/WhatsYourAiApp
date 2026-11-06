@@ -149,7 +149,11 @@ async def start_form_flow(
 @function_tool
 async def send_voice_reply(
     wrapper: RunContextWrapper[WhatsAppAgentContext],
-    text: Annotated[str, "Exactly what to say aloud (spoken style, under ~1000 characters, no markdown)."],
+    text: Annotated[
+        str,
+        "What to say aloud, written the way a person talks: contractions, short sentences, the user's own "
+        "language/Hinglish mix, no markdown or bullets, say colors by name instead of hex codes, under ~1000 chars.",
+    ],
     style: Annotated[str | None, "Optional delivery notes, e.g. 'calm and encouraging'."] = None,
 ) -> str:
     """Send a spoken voice note. Only use when the user explicitly asks for audio or a voice reply."""

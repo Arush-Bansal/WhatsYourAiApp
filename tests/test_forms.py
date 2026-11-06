@@ -39,7 +39,10 @@ async def test_logo_form_full_walkthrough(sent):
     assert await say("text", "Brew Lab") is True
     assert await say("list", "f:industry:food", "Food & drink") is True
     assert await say("text", "college students") is True
+    assert await say("text", "cheaper and cooler than stationery shops") is True
+    assert await say("list", "f:touchpoints:social", "Social media") is True
     assert await say("text", "bold, warm, playful") is True
+    assert await say("text", "skip") is True  # avoid (optional)
     assert await say("text", "just typing") is True  # button step: nudged, step unchanged
     assert await say("button", "f:style:wordmark", "Wordmark") is True
     done = await say("text", "skip")

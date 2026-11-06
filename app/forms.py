@@ -75,8 +75,24 @@ FORMS: dict[str, Form] = {
                     Option("other", "Something else"),
                 ),
             ),
-            Step("audience", "Who is it for? (e.g. students in Delhi, busy parents, startup founders)"),
+            Step("audience", "Who is it for, and when do they meet the brand? (e.g. college students buying stationery on campus)"),
+            Step("difference", "What makes it better or different than the usual alternative? One line is plenty."),
+            Step(
+                "touchpoints",
+                "Where will the logo show up the most?",
+                kind="list",
+                list_button_label="Pick one",
+                options=(
+                    Option("packaging", "Packaging / product"),
+                    Option("app_web", "App or website"),
+                    Option("social", "Social media"),
+                    Option("shopfront", "Shop / signage"),
+                    Option("print", "Print / merch"),
+                    Option("everywhere", "Everywhere"),
+                ),
+            ),
             Step("personality", "Give me 3 words for how the brand should feel (e.g. bold, warm, minimal)."),
+            Step("avoid", "Anything it must NOT look like? A brand to steer away from, or a style you dislike. Reply *skip* if none.", optional=True),
             Step(
                 "style",
                 "Which logo style do you prefer?",
@@ -95,7 +111,8 @@ FORMS: dict[str, Form] = {
         ),
         completion_instruction=(
             "The user finished the logo brief form. Write one detailed image prompt from these answers "
-            "(style, palette with hex codes, composition, mood; plain background, no mockups) and call "
+            "(mark type from the chosen style, palette with hex codes as a main/partner/neutral system, simple geometry that "
+            "works tiny and in one colour, avoid category cliches and any rival named in 'avoid', plain background, no mockups) and call "
             "generate_and_send_image. Afterwards offer to adjust colors, style or layout."
         ),
     ),

@@ -10,6 +10,13 @@ from app.config import OPENAI_API_KEY, OPENAI_TTS_MODEL, OPENAI_TTS_VOICE
 
 logger = logging.getLogger(__name__)
 
+NATURAL_STYLE = (
+    "Sound like a warm, relaxed friend sending a quick voice note, not a narrator or assistant. "
+    "Conversational pace with small natural pauses, varied intonation, a hint of a smile, and "
+    "occasional casual fillers where they fit. Never announcer cadence, never read like a list. "
+    "Hindi or Hinglish words should be pronounced the way a native Indian speaker would say them."
+)
+
 
 async def synthesize_speech(text: str, style: str | None = None) -> bytes | None:
     """Return Ogg/Opus bytes (WhatsApp voice-note format), or None on failure."""
@@ -23,7 +30,7 @@ async def synthesize_speech(text: str, style: str | None = None) -> bytes | None
             model=OPENAI_TTS_MODEL,
             voice=OPENAI_TTS_VOICE,
             input=text[:3000],
-            instructions=style or "Speak naturally and warmly, like a friendly designer on a voice note.",
+            instructions=NATURAL_STYLE + (f" Extra direction: {style}" if style else ""),
             response_format="opus",
         )
         return resp.content
