@@ -20,6 +20,7 @@ async def run_whatsapp_turn(
     *,
     context: WhatsAppAgentContext,
     user_prompt: str,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> Any | None:
     """Run the WhatsApp agent for one inbound user turn. Returns the SDK RunResult or None if skipped."""
     if not (OPENAI_API_KEY or "").strip():
@@ -34,10 +35,14 @@ async def run_whatsapp_turn(
         history = await store.recent_messages(context.to_wa_id, HISTORY_TURNS)
         await store.append_message(context.to_wa_id, "user", user_prompt[:MAX_STORED_CHARS])
 
+    content: Any = user_prompt
+    if attachments:
+        content = [{"type": "input_text", "text": user_prompt}, *attachments]
+
     agent = create_whatsapp_agent(model=OPENAI_AGENT_MODEL)
     result = await Runner.run(
         starting_agent=agent,
-        input=[*history, {"role": "user", "content": user_prompt}],
+        input=[*history, {"role": "user", "content": content}],
         context=context,
     )
     logger.info(

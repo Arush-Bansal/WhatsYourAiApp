@@ -5,9 +5,11 @@ from typing import Annotated, Literal
 from agents import RunContextWrapper, function_tool
 
 from app.agent.context import BaseAgentContext, WhatsAppAgentContext
+from app.audio import synthesize_speech
 from app.forms import FORMS, start_form
 from app.images import generate_image
 from app.whatsapp.client import (
+    send_audio_reply,
     send_image_reply,
     send_interactive_buttons_reply,
     send_interactive_list_reply,
@@ -142,3 +144,24 @@ async def start_form_flow(
         c.reply_sent = True
         await record_assistant(c, f"[started the {form_id} form; the user is answering its questions]")
     return "ok:form_started" if ok else "error:form_not_started"
+
+
+@function_tool
+async def send_voice_reply(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    text: Annotated[str, "Exactly what to say aloud (spoken style, under ~1000 characters, no markdown)."],
+    style: Annotated[str | None, "Optional delivery notes, e.g. 'calm and encouraging'."] = None,
+) -> str:
+    """Send a spoken voice note. Only use when the user explicitly asks for audio or a voice reply."""
+    c = wrapper.context
+    audio = await synthesize_speech(text, style)
+    if audio is None:
+        return "error:speech_failed"
+    media_id = await upload_whatsapp_media(c.http, c.phone_number_id, audio, "audio/ogg", "voice.ogg")
+    if media_id is None:
+        return "error:audio_upload_failed"
+    ok = await send_audio_reply(c.http, c.phone_number_id, c.to_wa_id, media_id)
+    if ok:
+        c.reply_sent = True
+        await record_assistant(c, f"[sent a voice note saying] {text}")
+    return "ok:voice_sent" if ok else "error:voice_not_sent"

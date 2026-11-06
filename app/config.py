@@ -38,3 +38,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 # Set automatically by Render; used to link the wake endpoint from the WhatsApp profile.
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
+
+OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "coral")

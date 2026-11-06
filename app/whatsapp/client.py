@@ -135,6 +135,31 @@ async def send_image_reply(
     return True
 
 
+async def send_audio_reply(
+    http: httpx.AsyncClient,
+    phone_number_id: str,
+    to_wa_id: str,
+    media_id: str,
+) -> bool:
+    """Send an uploaded Ogg/Opus file; WhatsApp shows it as a playable voice note."""
+    if not WHATSAPP_ACCESS_TOKEN:
+        logger.error("WHATSAPP_ACCESS_TOKEN is not set; cannot send reply")
+        return False
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_wa_id,
+        "type": "audio",
+        "audio": {"id": media_id},
+    }
+    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+    resp = await http.post(url, json=payload, headers=headers)
+    if resp.status_code >= 400:
+        logger.error("Graph API error (audio): %s %s", resp.status_code, resp.text[:500])
+        return False
+    return True
+
+
 def _buttons_to_graph_action(payload: InteractiveButtonsPayload) -> dict[str, Any]:
     return {
         "buttons": [
