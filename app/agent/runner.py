@@ -9,10 +9,10 @@ from agents import Runner
 from app.agent.agent import create_gmail_agent, create_slack_agent, create_whatsapp_agent
 from app.agent.context import GmailAgentContext, SlackAgentContext, WhatsAppAgentContext
 from app.config import OPENAI_AGENT_MODEL, OPENAI_API_KEY
+from app.memory import prepare_turn
 
 logger = logging.getLogger(__name__)
 
-HISTORY_TURNS = 12  # recent messages (user + assistant) replayed to the model
 MAX_STORED_CHARS = 1500
 
 
@@ -30,10 +30,14 @@ async def run_whatsapp_turn(
     os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY.strip()
 
     store = context.store
+    memory_block = ""
     history: list[dict[str, str]] = []
     if store is not None:
-        history = await store.recent_messages(context.to_wa_id, HISTORY_TURNS)
-        await store.append_message(context.to_wa_id, "user", user_prompt[:MAX_STORED_CHARS])
+        turn = await prepare_turn(store, context.to_wa_id)
+        context.session_id = turn.session.id
+        context.brand_id = turn.brand.id
+        memory_block, history = turn.memory_block, turn.history
+        await store.append_message(context.to_wa_id, "user", user_prompt[:MAX_STORED_CHARS], turn.session.id)
 
     content: Any = user_prompt
     if attachments:
@@ -42,7 +46,11 @@ async def run_whatsapp_turn(
     agent = create_whatsapp_agent(model=OPENAI_AGENT_MODEL)
     result = await Runner.run(
         starting_agent=agent,
-        input=[*history, {"role": "user", "content": content}],
+        input=[
+            *([{"role": "system", "content": memory_block}] if memory_block else []),
+            *history,
+            {"role": "user", "content": content},
+        ],
         context=context,
     )
     logger.info(

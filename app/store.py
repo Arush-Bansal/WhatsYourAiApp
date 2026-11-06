@@ -15,7 +15,8 @@ from app.config import DATABASE_URL, PROCESSED_IDS_MAX
 logger = logging.getLogger(__name__)
 
 FORM_SESSION_TTL = timedelta(hours=24)
-HISTORY_MAX_AGE = timedelta(hours=12)
+SESSION_GAP = timedelta(minutes=30)  # a longer silence starts a new chat session
+DEFAULT_BRAND_NAME = "My brand"
 
 
 @dataclass
@@ -26,6 +27,31 @@ class FormSession:
     answers: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class Brand:
+    id: int
+    wa_id: str
+    name: str
+    card: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class ChatSession:
+    id: int
+    wa_id: str
+    brand_id: int
+    summary: str = ""
+    summarised: bool = False
+
+
+@dataclass
+class Msg:
+    id: int
+    role: str
+    content: str
+    compacted: bool = False
+
+
 class Store(Protocol):
     async def claim_message(self, message_id: str) -> bool:
         """Atomically record message_id; False if it was already seen."""
@@ -34,9 +60,27 @@ class Store(Protocol):
     async def save_form_session(self, session: FormSession) -> None: ...
     async def clear_form_session(self, wa_id: str) -> None: ...
     async def save_submission(self, wa_id: str, form_id: str, answers: dict[str, str]) -> None: ...
-    async def append_message(self, wa_id: str, role: str, content: str) -> None: ...
-    async def recent_messages(self, wa_id: str, limit: int) -> list[dict[str, str]]:
-        """Oldest-first [{role, content}] from the last HISTORY_MAX_AGE."""
+
+    # brands: one card of durable facts per brand; one brand is active per user
+    async def active_brand(self, wa_id: str) -> Brand: ...
+    async def create_brand(self, wa_id: str, name: str) -> Brand: ...
+    async def switch_brand(self, wa_id: str, name: str) -> Brand | None: ...
+    async def list_brands(self, wa_id: str) -> list[Brand]: ...
+    async def update_brand(self, brand_id: int, name: str | None, card_patch: dict[str, str]) -> Brand: ...
+
+    # chat sessions and their messages
+    async def open_session(self, wa_id: str, brand_id: int) -> ChatSession:
+        """Current session (touching it), or a new one after SESSION_GAP of silence / a brand switch."""
+
+    async def unsummarised_sessions(self, wa_id: str, exclude_id: int) -> list[ChatSession]: ...
+    async def brand_summaries(self, brand_id: int, exclude_id: int, limit: int) -> list[str]: ...
+    async def set_session_summary(
+        self, session_id: int, summary: str, *, closed: bool = False, compact_upto: int | None = None
+    ) -> None:
+        """Store the summary; closed=True marks the session finished, compact_upto hides folded messages."""
+
+    async def append_message(self, wa_id: str, role: str, content: str, session_id: int | None = None) -> None: ...
+    async def session_messages(self, session_id: int) -> list[Msg]: ...
 
     async def close(self) -> None: ...
 
@@ -44,9 +88,18 @@ class Store(Protocol):
 class MemoryStore:
     def __init__(self) -> None:
         self._seen: set[str] = set()
-        self._sessions: dict[str, tuple[FormSession, datetime]] = {}
+        self._forms: dict[str, tuple[FormSession, datetime]] = {}
         self.submissions: list[tuple[str, str, dict[str, str]]] = []
-        self._messages: dict[str, list[tuple[str, str, datetime]]] = {}
+        self._brands: dict[int, Brand] = {}
+        self._active: dict[str, int] = {}
+        self._sessions: dict[int, tuple[ChatSession, datetime]] = {}
+        self._msgs: dict[int, list[Msg]] = {}
+        self._loose: list[tuple[str, str, str]] = []
+        self._ids = 0
+
+    def _next(self) -> int:
+        self._ids += 1
+        return self._ids
 
     async def claim_message(self, message_id: str) -> bool:
         if message_id in self._seen:
@@ -57,35 +110,128 @@ class MemoryStore:
         return True
 
     async def get_form_session(self, wa_id: str) -> FormSession | None:
-        item = self._sessions.get(wa_id)
+        item = self._forms.get(wa_id)
         if item is None:
             return None
         session, updated = item
         if datetime.now(timezone.utc) - updated > FORM_SESSION_TTL:
-            del self._sessions[wa_id]
+            del self._forms[wa_id]
             return None
         return session
 
     async def save_form_session(self, session: FormSession) -> None:
-        self._sessions[session.wa_id] = (session, datetime.now(timezone.utc))
+        self._forms[session.wa_id] = (session, datetime.now(timezone.utc))
 
     async def clear_form_session(self, wa_id: str) -> None:
-        self._sessions.pop(wa_id, None)
+        self._forms.pop(wa_id, None)
 
     async def save_submission(self, wa_id: str, form_id: str, answers: dict[str, str]) -> None:
         self.submissions.append((wa_id, form_id, answers))
 
-    async def append_message(self, wa_id: str, role: str, content: str) -> None:
-        self._messages.setdefault(wa_id, []).append((role, content, datetime.now(timezone.utc)))
-        del self._messages[wa_id][:-50]
+    async def active_brand(self, wa_id: str) -> Brand:
+        bid = self._active.get(wa_id)
+        if bid is not None:
+            return self._brands[bid]
+        return await self.create_brand(wa_id, DEFAULT_BRAND_NAME)
 
-    async def recent_messages(self, wa_id: str, limit: int) -> list[dict[str, str]]:
-        cutoff = datetime.now(timezone.utc) - HISTORY_MAX_AGE
-        items = [m for m in self._messages.get(wa_id, []) if m[2] >= cutoff]
-        return [{"role": r, "content": c} for r, c, _ in items[-limit:]]
+    async def create_brand(self, wa_id: str, name: str) -> Brand:
+        brand = Brand(self._next(), wa_id, name.strip() or DEFAULT_BRAND_NAME)
+        self._brands[brand.id] = brand
+        self._active[wa_id] = brand.id
+        return brand
+
+    async def switch_brand(self, wa_id: str, name: str) -> Brand | None:
+        brand = _match_brand(await self.list_brands(wa_id), name)
+        if brand is not None:
+            self._active[wa_id] = brand.id
+        return brand
+
+    async def list_brands(self, wa_id: str) -> list[Brand]:
+        return [b for b in self._brands.values() if b.wa_id == wa_id]
+
+    async def update_brand(self, brand_id: int, name: str | None, card_patch: dict[str, str]) -> Brand:
+        brand = self._brands[brand_id]
+        if name:
+            brand.name = name
+        _merge_card(brand.card, card_patch)
+        return brand
+
+    async def open_session(self, wa_id: str, brand_id: int) -> ChatSession:
+        now = datetime.now(timezone.utc)
+        mine = [(s, t) for s, t in self._sessions.values() if s.wa_id == wa_id]
+        if mine:
+            last, touched = max(mine, key=lambda x: x[0].id)
+            if last.brand_id == brand_id and now - touched <= SESSION_GAP and not last.summarised:
+                self._sessions[last.id] = (last, now)
+                return last
+        session = ChatSession(self._next(), wa_id, brand_id)
+        self._sessions[session.id] = (session, now)
+        return session
+
+    async def unsummarised_sessions(self, wa_id: str, exclude_id: int) -> list[ChatSession]:
+        return sorted(
+            (s for s, _ in self._sessions.values() if s.wa_id == wa_id and s.id != exclude_id and not s.summarised),
+            key=lambda s: s.id,
+        )
+
+    async def brand_summaries(self, brand_id: int, exclude_id: int, limit: int) -> list[str]:
+        done = sorted(
+            (s for s, _ in self._sessions.values() if s.brand_id == brand_id and s.id != exclude_id and s.summarised and s.summary),
+            key=lambda s: s.id,
+        )
+        return [s.summary for s in done][-limit:]
+
+    async def set_session_summary(
+        self, session_id: int, summary: str, *, closed: bool = False, compact_upto: int | None = None
+    ) -> None:
+        session, touched = self._sessions[session_id]
+        session.summary = summary
+        if closed:
+            session.summarised = True
+        if compact_upto is not None:
+            for m in self._msgs.get(session_id, []):
+                if m.id <= compact_upto:
+                    m.compacted = True
+
+    async def append_message(self, wa_id: str, role: str, content: str, session_id: int | None = None) -> None:
+        if session_id is None:
+            self._loose.append((wa_id, role, content))
+            return
+        self._msgs.setdefault(session_id, []).append(Msg(self._next(), role, content))
+
+    async def session_messages(self, session_id: int) -> list[Msg]:
+        return list(self._msgs.get(session_id, []))
 
     async def close(self) -> None:
         return None
+
+
+def _match_brand(brands: list[Brand], name: str) -> Brand | None:
+    needle = name.strip().lower()
+    for b in brands:
+        if b.name.lower() == needle:
+            return b
+    for b in brands:
+        if needle and needle in b.name.lower():
+            return b
+    return None
+
+
+def _merge_card(card: dict[str, str], patch: dict[str, str]) -> None:
+    """Set non-empty values; an empty string clears the field."""
+    for key, value in patch.items():
+        value = (value or "").strip()
+        if value:
+            card[key] = value
+        else:
+            card.pop(key, None)
+
+
+def _brand_from_row(row: Any) -> Brand:
+    card: Any = row["card"]
+    if isinstance(card, str):
+        card = json.loads(card)
+    return Brand(row["id"], row["wa_id"], row["name"], dict(card))
 
 
 class PgStore:
@@ -144,24 +290,125 @@ class PgStore:
             json.dumps(answers),
         )
 
-    async def append_message(self, wa_id: str, role: str, content: str) -> None:
+    async def active_brand(self, wa_id: str) -> Brand:
+        row = await self._pool.fetchrow("select * from wa_agent.brands where wa_id = $1 and active", wa_id)
+        if row is None:
+            row = await self._pool.fetchrow(
+                "update wa_agent.brands set active = true where id = ("
+                "select id from wa_agent.brands where wa_id = $1 order by id desc limit 1) returning *",
+                wa_id,
+            )
+        if row is None:
+            return await self.create_brand(wa_id, DEFAULT_BRAND_NAME)
+        return _brand_from_row(row)
+
+    async def create_brand(self, wa_id: str, name: str) -> Brand:
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute("update wa_agent.brands set active = false where wa_id = $1 and active", wa_id)
+            row = await conn.fetchrow(
+                "insert into wa_agent.brands (wa_id, name, active) values ($1, $2, true) returning *",
+                wa_id,
+                name.strip() or DEFAULT_BRAND_NAME,
+            )
+        return _brand_from_row(row)
+
+    async def switch_brand(self, wa_id: str, name: str) -> Brand | None:
+        brand = _match_brand(await self.list_brands(wa_id), name)
+        if brand is None:
+            return None
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute("update wa_agent.brands set active = false where wa_id = $1 and active", wa_id)
+            await conn.execute("update wa_agent.brands set active = true where id = $1", brand.id)
+        return brand
+
+    async def list_brands(self, wa_id: str) -> list[Brand]:
+        rows = await self._pool.fetch("select * from wa_agent.brands where wa_id = $1 order by id", wa_id)
+        return [_brand_from_row(r) for r in rows]
+
+    async def update_brand(self, brand_id: int, name: str | None, card_patch: dict[str, str]) -> Brand:
+        row = await self._pool.fetchrow("select * from wa_agent.brands where id = $1", brand_id)
+        brand = _brand_from_row(row)
+        _merge_card(brand.card, card_patch)
+        if name:
+            brand.name = name
         await self._pool.execute(
-            "insert into wa_agent.messages (wa_id, role, content) values ($1, $2, $3)",
+            "update wa_agent.brands set name = $2, card = $3::jsonb, updated_at = now() where id = $1",
+            brand_id,
+            brand.name,
+            json.dumps(brand.card),
+        )
+        return brand
+
+    async def open_session(self, wa_id: str, brand_id: int) -> ChatSession:
+        row = await self._pool.fetchrow(
+            "update wa_agent.sessions set last_at = now() where id = ("
+            "select id from wa_agent.sessions where wa_id = $1 and brand_id = $2 and not summarised "
+            "and last_at > now() - make_interval(secs => $3) order by id desc limit 1) "
+            "returning id, wa_id, brand_id, summary, summarised",
+            wa_id,
+            brand_id,
+            SESSION_GAP.total_seconds(),
+        )
+        if row is None:
+            row = await self._pool.fetchrow(
+                "insert into wa_agent.sessions (wa_id, brand_id) values ($1, $2) "
+                "returning id, wa_id, brand_id, summary, summarised",
+                wa_id,
+                brand_id,
+            )
+        return ChatSession(row["id"], row["wa_id"], row["brand_id"], row["summary"], row["summarised"])
+
+    async def unsummarised_sessions(self, wa_id: str, exclude_id: int) -> list[ChatSession]:
+        rows = await self._pool.fetch(
+            "select id, wa_id, brand_id, summary, summarised from wa_agent.sessions "
+            "where wa_id = $1 and id <> $2 and not summarised order by id limit 10",
+            wa_id,
+            exclude_id,
+        )
+        return [ChatSession(r["id"], r["wa_id"], r["brand_id"], r["summary"], r["summarised"]) for r in rows]
+
+    async def brand_summaries(self, brand_id: int, exclude_id: int, limit: int) -> list[str]:
+        rows = await self._pool.fetch(
+            "select summary from wa_agent.sessions where brand_id = $1 and id <> $2 and summarised "
+            "and summary <> '' order by id desc limit $3",
+            brand_id,
+            exclude_id,
+            limit,
+        )
+        return [r["summary"] for r in reversed(rows)]
+
+    async def set_session_summary(
+        self, session_id: int, summary: str, *, closed: bool = False, compact_upto: int | None = None
+    ) -> None:
+        async with self._pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                "update wa_agent.sessions set summary = $2, summarised = summarised or $3 where id = $1",
+                session_id,
+                summary,
+                closed,
+            )
+            if compact_upto is not None:
+                await conn.execute(
+                    "update wa_agent.messages set compacted = true where session_id = $1 and id <= $2",
+                    session_id,
+                    compact_upto,
+                )
+
+    async def append_message(self, wa_id: str, role: str, content: str, session_id: int | None = None) -> None:
+        await self._pool.execute(
+            "insert into wa_agent.messages (wa_id, role, content, session_id) values ($1, $2, $3, $4)",
             wa_id,
             role,
             content,
+            session_id,
         )
 
-    async def recent_messages(self, wa_id: str, limit: int) -> list[dict[str, str]]:
+    async def session_messages(self, session_id: int) -> list[Msg]:
         rows = await self._pool.fetch(
-            "select role, content from wa_agent.messages "
-            "where wa_id = $1 and created_at > now() - make_interval(secs => $2) "
-            "order by id desc limit $3",
-            wa_id,
-            HISTORY_MAX_AGE.total_seconds(),
-            limit,
+            "select id, role, content, compacted from wa_agent.messages where session_id = $1 order by id",
+            session_id,
         )
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        return [Msg(r["id"], r["role"], r["content"], r["compacted"]) for r in rows]
 
     async def close(self) -> None:
         await self._pool.close()

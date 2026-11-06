@@ -23,6 +23,8 @@ class WhatsAppAgentContext(BaseAgentContext):
     to_wa_id: str = ""
     reply_sent: bool = False
     store: Store | None = None
+    session_id: int | None = None
+    brand_id: int | None = None
 
 
 @dataclass

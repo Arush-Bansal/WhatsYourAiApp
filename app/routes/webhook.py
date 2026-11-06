@@ -47,7 +47,7 @@ async def _dispatch_result(
     text = getattr(result, "final_output", None)
     if text and isinstance(text, str):
         if await send_text_reply(http, ctx.phone_number_id, ctx.to_wa_id, text) and ctx.store:
-            await ctx.store.append_message(ctx.to_wa_id, "assistant", text[:1500])
+            await ctx.store.append_message(ctx.to_wa_id, "assistant", text[:1500], ctx.session_id)
 
 
 @router.get("/webhook")

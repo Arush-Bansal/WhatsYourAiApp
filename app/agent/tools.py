@@ -7,6 +7,7 @@ from agents import RunContextWrapper, function_tool
 from app.agent.context import BaseAgentContext, WhatsAppAgentContext
 from app.audio import synthesize_speech
 from app.forms import FORMS, start_form
+from app.memory import CARD_FIELDS
 from app.images import generate_image
 from app.whatsapp.client import (
     send_audio_reply,
@@ -34,7 +35,7 @@ Section = Literal[
 async def record_assistant(c: WhatsAppAgentContext, text: str) -> None:
     """Remember what we sent, so the next turn has the conversation context."""
     if c.store is not None:
-        await c.store.append_message(c.to_wa_id, "assistant", text[:1500])
+        await c.store.append_message(c.to_wa_id, "assistant", text[:1500], c.session_id)
 
 
 @function_tool
@@ -169,3 +170,67 @@ async def send_voice_reply(
         c.reply_sent = True
         await record_assistant(c, f"[sent a voice note saying] {text}")
     return "ok:voice_sent" if ok else "error:voice_not_sent"
+
+
+@function_tool
+async def update_brand_card(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    brand_name: Annotated[str | None, "Set or correct the brand's name."] = None,
+    category: Annotated[str | None, "What it sells / its category. Empty string clears."] = None,
+    audience: Annotated[str | None, "Who it is for and when they meet the brand."] = None,
+    difference: Annotated[str | None, "The one win over the usual alternative."] = None,
+    touchpoints: Annotated[str | None, "Where the brand shows up most."] = None,
+    personality: Annotated[str | None, "3 words for how it should feel."] = None,
+    avoid: Annotated[str | None, "What it must not look like."] = None,
+    style: Annotated[str | None, "Preferred logo style / mark type."] = None,
+    colors: Annotated[str | None, "Palette decisions (roles and hex)."] = None,
+    fonts: Annotated[str | None, "Type decisions."] = None,
+    tagline: Annotated[str | None, "Tagline or descriptor."] = None,
+    logo_notes: Annotated[str | None, "Decisions about the logo."] = None,
+    preferences: Annotated[str | None, "Lasting likes and dislikes."] = None,
+    locked: Annotated[str | None, "Things the user approved and wants kept."] = None,
+) -> str:
+    """Save durable facts about the active brand to its memory card. Use short phrases; only what the user
+    stated or approved. Call it whenever the user settles something worth remembering. Costs nothing to the user."""
+    c = wrapper.context
+    if c.store is None or c.brand_id is None:
+        return "error:no_memory"
+    values = {
+        "category": category, "audience": audience, "difference": difference, "touchpoints": touchpoints,
+        "personality": personality, "avoid": avoid, "style": style, "colors": colors, "fonts": fonts,
+        "tagline": tagline, "logo_notes": logo_notes, "preferences": preferences, "locked": locked,
+    }
+    patch = {k: v for k, v in values.items() if v is not None and k in CARD_FIELDS}
+    await c.store.update_brand(c.brand_id, brand_name, patch)
+    return "ok:saved"
+
+
+@function_tool
+async def create_brand(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    name: Annotated[str, "Name of the new brand."],
+) -> str:
+    """Start a new brand and make it the active one (use when the user begins working on a different brand)."""
+    c = wrapper.context
+    if c.store is None:
+        return "error:no_memory"
+    brand = await c.store.create_brand(c.to_wa_id, name)
+    c.brand_id = brand.id
+    return f"ok:created_and_active:{brand.name}"
+
+
+@function_tool
+async def switch_brand(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    name: Annotated[str, "Name (or part of the name) of an existing brand."],
+) -> str:
+    """Switch the active brand to one the user already has."""
+    c = wrapper.context
+    if c.store is None:
+        return "error:no_memory"
+    brand = await c.store.switch_brand(c.to_wa_id, name)
+    if brand is None:
+        names = ", ".join(b.name for b in await c.store.list_brands(c.to_wa_id))
+        return f"error:not_found; the user's brands are: {names}"
+    c.brand_id = brand.id
+    return f"ok:active:{brand.name}"

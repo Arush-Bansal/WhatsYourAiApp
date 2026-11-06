@@ -17,6 +17,9 @@ from app.agent.tools import (
     send_voice_reply,
     send_whatsapp_text,
     start_form_flow,
+    create_brand,
+    switch_brand,
+    update_brand_card,
 )
 
 
@@ -62,6 +65,9 @@ def create_whatsapp_agent(*, model: str) -> Agent[WhatsAppAgentContext]:
             generate_and_send_image,
             start_form_flow,
             send_voice_reply,
+            update_brand_card,
+            create_brand,
+            switch_brand,
         ],
     )
 

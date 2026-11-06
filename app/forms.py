@@ -8,7 +8,7 @@ from typing import Literal
 
 import httpx
 
-from app.store import FormSession, Store
+from app.store import DEFAULT_BRAND_NAME, FormSession, Store
 from app.whatsapp.client import (
     send_interactive_buttons_reply,
     send_interactive_list_reply,
@@ -190,6 +190,28 @@ def _brief_prompt(form: Form, answers: dict[str, str]) -> str:
     return f"{form.completion_instruction}\n\nForm answers:\n" + "\n".join(lines)
 
 
+FORM_TO_CARD = {
+    "industry": "category",
+    "audience": "audience",
+    "difference": "difference",
+    "touchpoints": "touchpoints",
+    "personality": "personality",
+    "avoid": "avoid",
+    "style": "style",
+    "colors": "colors",
+}
+
+
+async def _save_to_brand(store: Store, wa_id: str, answers: dict[str, str]) -> None:
+    """Completed brief becomes the brand's memory card (new brand if the name differs from the active one)."""
+    name = answers.get("brand_name", "").strip()
+    brand = await store.active_brand(wa_id)
+    if name and brand.name not in (DEFAULT_BRAND_NAME, name) and name.lower() not in brand.name.lower():
+        brand = await store.create_brand(wa_id, name)
+    patch = {card: answers[key] for key, card in FORM_TO_CARD.items() if answers.get(key)}
+    await store.update_brand(brand.id, name or None, patch)
+
+
 async def handle_incoming(
     store: Store,
     http: httpx.AsyncClient,
@@ -247,6 +269,7 @@ async def handle_incoming(
     if session.step >= len(form.steps):
         await store.save_submission(wa_id, form.id, session.answers)
         await store.clear_form_session(wa_id)
+        await _save_to_brand(store, wa_id, session.answers)
         return Completed(prompt=_brief_prompt(form, session.answers))
     await store.save_form_session(session)
     await _send_step(http, phone_number_id, wa_id, form, session.step)
