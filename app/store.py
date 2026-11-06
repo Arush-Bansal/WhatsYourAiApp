@@ -15,6 +15,7 @@ from app.config import DATABASE_URL, PROCESSED_IDS_MAX
 logger = logging.getLogger(__name__)
 
 FORM_SESSION_TTL = timedelta(hours=24)
+HISTORY_MAX_AGE = timedelta(hours=12)
 
 
 @dataclass
@@ -33,6 +34,10 @@ class Store(Protocol):
     async def save_form_session(self, session: FormSession) -> None: ...
     async def clear_form_session(self, wa_id: str) -> None: ...
     async def save_submission(self, wa_id: str, form_id: str, answers: dict[str, str]) -> None: ...
+    async def append_message(self, wa_id: str, role: str, content: str) -> None: ...
+    async def recent_messages(self, wa_id: str, limit: int) -> list[dict[str, str]]:
+        """Oldest-first [{role, content}] from the last HISTORY_MAX_AGE."""
+
     async def close(self) -> None: ...
 
 
@@ -41,6 +46,7 @@ class MemoryStore:
         self._seen: set[str] = set()
         self._sessions: dict[str, tuple[FormSession, datetime]] = {}
         self.submissions: list[tuple[str, str, dict[str, str]]] = []
+        self._messages: dict[str, list[tuple[str, str, datetime]]] = {}
 
     async def claim_message(self, message_id: str) -> bool:
         if message_id in self._seen:
@@ -68,6 +74,15 @@ class MemoryStore:
 
     async def save_submission(self, wa_id: str, form_id: str, answers: dict[str, str]) -> None:
         self.submissions.append((wa_id, form_id, answers))
+
+    async def append_message(self, wa_id: str, role: str, content: str) -> None:
+        self._messages.setdefault(wa_id, []).append((role, content, datetime.now(timezone.utc)))
+        del self._messages[wa_id][:-50]
+
+    async def recent_messages(self, wa_id: str, limit: int) -> list[dict[str, str]]:
+        cutoff = datetime.now(timezone.utc) - HISTORY_MAX_AGE
+        items = [m for m in self._messages.get(wa_id, []) if m[2] >= cutoff]
+        return [{"role": r, "content": c} for r, c, _ in items[-limit:]]
 
     async def close(self) -> None:
         return None
@@ -128,6 +143,25 @@ class PgStore:
             form_id,
             json.dumps(answers),
         )
+
+    async def append_message(self, wa_id: str, role: str, content: str) -> None:
+        await self._pool.execute(
+            "insert into wa_agent.messages (wa_id, role, content) values ($1, $2, $3)",
+            wa_id,
+            role,
+            content,
+        )
+
+    async def recent_messages(self, wa_id: str, limit: int) -> list[dict[str, str]]:
+        rows = await self._pool.fetch(
+            "select role, content from wa_agent.messages "
+            "where wa_id = $1 and created_at > now() - make_interval(secs => $2) "
+            "order by id desc limit $3",
+            wa_id,
+            HISTORY_MAX_AGE.total_seconds(),
+            limit,
+        )
+        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
     async def close(self) -> None:
         await self._pool.close()

@@ -63,3 +63,13 @@ async def test_cancel_and_stale_button(sent):
 async def test_claim_message_dedupes():
     store = MemoryStore()
     assert await store.claim_message("m1") and not await store.claim_message("m1")
+
+
+@pytest.mark.asyncio
+async def test_message_history_is_recent_and_ordered():
+    store = MemoryStore()
+    for i in range(5):
+        await store.append_message("91", "user" if i % 2 == 0 else "assistant", f"m{i}")
+    got = await store.recent_messages("91", 3)
+    assert [m["content"] for m in got] == ["m2", "m3", "m4"]
+    assert await store.recent_messages("other", 3) == []

@@ -23,10 +23,20 @@ create table if not exists wa_agent.form_submissions (
 );
 create index if not exists form_submissions_wa_id_idx on wa_agent.form_submissions (wa_id, created_at desc);
 
+create table if not exists wa_agent.messages (
+  id bigint generated always as identity primary key,
+  wa_id text not null,
+  role text not null check (role in ('user', 'assistant')),
+  content text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists messages_wa_id_idx on wa_agent.messages (wa_id, id desc);
+
 -- No access through the public Supabase APIs; the bot connects with its own role.
 alter table wa_agent.processed_messages enable row level security;
 alter table wa_agent.form_sessions enable row level security;
 alter table wa_agent.form_submissions enable row level security;
+alter table wa_agent.messages enable row level security;
 
 do $$
 begin
@@ -40,3 +50,4 @@ grant usage, select on all sequences in schema wa_agent to wa_agent_bot;
 create policy bot_all on wa_agent.processed_messages for all to wa_agent_bot using (true) with check (true);
 create policy bot_all on wa_agent.form_sessions for all to wa_agent_bot using (true) with check (true);
 create policy bot_all on wa_agent.form_submissions for all to wa_agent_bot using (true) with check (true);
+create policy bot_all on wa_agent.messages for all to wa_agent_bot using (true) with check (true);

@@ -28,5 +28,8 @@ id "logo_quick" title "Quick logo" and id "logo_full" title "Full brief". Then:
   - button "logo_quick" -> if you know the brand name and what it does, generate right away; otherwise ask \
 for those in one short text message, then generate.
   - If the user already said "quick" or gave a full brief in their message, skip the question.
+- If the user says to decide for them ("you decide", "surprise me"), do not ask again: invent a fitting \
+brand name and direction yourself, say what you chose in one line, and generate.
+- You can see the recent conversation above; use it, never re-ask something the user already answered.
 - Do not invent facts about the user's brand; use what they told you in this chat.
 - If something is outside brand/design, say so briefly and steer back."""

@@ -29,6 +29,12 @@ Section = Literal[
 ]
 
 
+async def record_assistant(c: WhatsAppAgentContext, text: str) -> None:
+    """Remember what we sent, so the next turn has the conversation context."""
+    if c.store is not None:
+        await c.store.append_message(c.to_wa_id, "assistant", text[:1500])
+
+
 @function_tool
 async def get_business_details(
     wrapper: RunContextWrapper[BaseAgentContext],
@@ -51,6 +57,7 @@ async def send_whatsapp_text(
     ok = await send_text_reply(c.http, c.phone_number_id, c.to_wa_id, body)
     if ok:
         c.reply_sent = True
+        await record_assistant(c, body)
     return "ok:text_sent" if ok else "error:text_not_sent"
 
 
@@ -66,6 +73,8 @@ async def send_whatsapp_interactive_buttons(
     )
     if ok:
         c.reply_sent = True
+        titles = " | ".join(f"{b.title} (id {b.id})" for b in payload.buttons)
+        await record_assistant(c, f"{payload.body_text}\n[buttons: {titles}]")
     return "ok:buttons_sent" if ok else "error:buttons_not_sent"
 
 
@@ -81,6 +90,8 @@ async def send_whatsapp_interactive_list(
     )
     if ok:
         c.reply_sent = True
+        rows = " | ".join(f"{r.title} (id {r.id})" for sec in payload.sections for r in sec.rows)
+        await record_assistant(c, f"{payload.body_text}\n[list: {rows}]")
     return "ok:list_sent" if ok else "error:list_not_sent"
 
 
@@ -109,6 +120,7 @@ async def generate_and_send_image(
     ok = await send_image_reply(c.http, c.phone_number_id, c.to_wa_id, media_id, caption)
     if ok:
         c.reply_sent = True
+        await record_assistant(c, f"[sent an image] prompt: {prompt}" + (f"\ncaption: {caption}" if caption else ""))
     return "ok:image_sent" if ok else "error:image_not_sent"
 
 
@@ -128,4 +140,5 @@ async def start_form_flow(
     ok = await start_form(c.store, c.http, c.phone_number_id, c.to_wa_id, form_id)
     if ok:
         c.reply_sent = True
+        await record_assistant(c, f"[started the {form_id} form; the user is answering its questions]")
     return "ok:form_started" if ok else "error:form_not_started"
