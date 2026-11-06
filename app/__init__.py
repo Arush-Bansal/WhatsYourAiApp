@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.config import LOG_LEVEL
 from app.store import create_store
+from app.whatsapp.profile import sync_business_profile
 from app.request_logging import RequestLoggingMiddleware
 from app.routes.gmail import router as gmail_router
 from app.routes.root import router as root_router
@@ -26,6 +27,7 @@ async def lifespan(app: FastAPI):
     async with httpx.AsyncClient(timeout=30.0) as client:
         app.state.http = client
         app.state.store = await create_store()
+        await sync_business_profile(client)
         try:
             yield
         finally:
