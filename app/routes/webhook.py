@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, Response
 
 from app.agent import (
     WhatsAppAgentContext,
@@ -60,7 +60,9 @@ async def verify_webhook(
 
 
 @router.post("/webhook")
-async def receive_webhook(request: Request) -> dict[str, str]:
+async def receive_webhook(
+    request: Request, background_tasks: BackgroundTasks
+) -> dict[str, str]:
     raw = await request.body()
     try:
         verify_meta_signature(raw, request.headers.get("x-hub-signature-256"))
@@ -71,8 +73,19 @@ async def receive_webhook(request: Request) -> dict[str, str]:
     except HTTPException:
         raise
 
-    http: httpx.AsyncClient = request.app.state.http
+    # Reply after responding 200: agent turns (esp. image generation) outlast Meta's webhook timeout.
+    background_tasks.add_task(_process_webhook, data, request.app.state.http)
+    return {"status": "ok"}
 
+
+async def _process_webhook(data: dict[str, Any], http: httpx.AsyncClient) -> None:
+    try:
+        await _handle_events(data, http)
+    except Exception:
+        logger.exception("Webhook processing failed")
+
+
+async def _handle_events(data: dict[str, Any], http: httpx.AsyncClient) -> None:
     for message_id, from_wa_id, bid, title, phone_number_id in iter_incoming_button_replies(
         data
     ):
@@ -162,5 +175,3 @@ async def receive_webhook(request: Request) -> dict[str, str]:
         prompt = prompt_for_text_message(hinglish)
         result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
         await _dispatch_result(result, http, ctx)
-
-    return {"status": "ok"}

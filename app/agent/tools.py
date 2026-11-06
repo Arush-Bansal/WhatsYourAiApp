@@ -5,10 +5,13 @@ from typing import Annotated, Literal
 from agents import RunContextWrapper, function_tool
 
 from app.agent.context import BaseAgentContext, WhatsAppAgentContext
+from app.images import generate_image
 from app.whatsapp.client import (
+    send_image_reply,
     send_interactive_buttons_reply,
     send_interactive_list_reply,
     send_text_reply,
+    upload_whatsapp_media,
 )
 from app.whatsapp.payloads import InteractiveButtonsPayload, InteractiveListPayload
 
@@ -78,3 +81,31 @@ async def send_whatsapp_interactive_list(
     if ok:
         c.reply_sent = True
     return "ok:list_sent" if ok else "error:list_not_sent"
+
+
+@function_tool
+async def generate_and_send_image(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    prompt: Annotated[
+        str,
+        "Detailed image prompt: subject, style, palette (hex codes if known), composition, mood.",
+    ],
+    caption: Annotated[str | None, "Optional short caption shown under the image (max 1024 chars)."] = None,
+    orientation: Annotated[
+        Literal["square", "landscape", "portrait"],
+        "Aspect ratio of the image.",
+    ] = "square",
+) -> str:
+    """Generate an image from the prompt and send it to the current user on WhatsApp."""
+    c = wrapper.context
+    size = {"square": "1024x1024", "landscape": "1536x1024", "portrait": "1024x1536"}[orientation]
+    image = await generate_image(prompt, size)
+    if image is None:
+        return "error:image_generation_failed"
+    media_id = await upload_whatsapp_media(c.http, c.phone_number_id, image, "image/jpeg")
+    if media_id is None:
+        return "error:image_upload_failed"
+    ok = await send_image_reply(c.http, c.phone_number_id, c.to_wa_id, media_id, caption)
+    if ok:
+        c.reply_sent = True
+    return "ok:image_sent" if ok else "error:image_not_sent"

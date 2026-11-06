@@ -81,6 +81,60 @@ async def download_whatsapp_media(
     return (bin_resp.content, mime_str)
 
 
+async def upload_whatsapp_media(
+    http: httpx.AsyncClient,
+    phone_number_id: str,
+    data: bytes,
+    mime_type: str,
+    filename: str = "image.jpg",
+) -> str | None:
+    """Upload bytes to WhatsApp media storage. Returns the media id or None on failure."""
+    if not WHATSAPP_ACCESS_TOKEN:
+        logger.error("WHATSAPP_ACCESS_TOKEN is not set; cannot upload media")
+        return None
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/media"
+    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+    resp = await http.post(
+        url,
+        headers=headers,
+        data={"messaging_product": "whatsapp", "type": mime_type},
+        files={"file": (filename, data, mime_type)},
+    )
+    if resp.status_code >= 400:
+        logger.error("Graph API media upload error: %s %s", resp.status_code, resp.text[:500])
+        return None
+    media_id = resp.json().get("id")
+    return str(media_id) if media_id else None
+
+
+async def send_image_reply(
+    http: httpx.AsyncClient,
+    phone_number_id: str,
+    to_wa_id: str,
+    media_id: str,
+    caption: str | None = None,
+) -> bool:
+    if not WHATSAPP_ACCESS_TOKEN:
+        logger.error("WHATSAPP_ACCESS_TOKEN is not set; cannot send reply")
+        return False
+    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{phone_number_id}/messages"
+    image: dict[str, Any] = {"id": media_id}
+    if caption:
+        image["caption"] = caption[:1024]
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": to_wa_id,
+        "type": "image",
+        "image": image,
+    }
+    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+    resp = await http.post(url, json=payload, headers=headers)
+    if resp.status_code >= 400:
+        logger.error("Graph API error (image): %s %s", resp.status_code, resp.text[:500])
+        return False
+    return True
+
+
 def _buttons_to_graph_action(payload: InteractiveButtonsPayload) -> dict[str, Any]:
     return {
         "buttons": [
