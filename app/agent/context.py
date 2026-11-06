@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from app.store import Store
+
 from app.agent.business import BusinessInfo, DENTAL_PRACTICE
 
 
@@ -20,6 +22,7 @@ class WhatsAppAgentContext(BaseAgentContext):
     phone_number_id: str = ""
     to_wa_id: str = ""
     reply_sent: bool = False
+    store: Store | None = None
 
 
 @dataclass

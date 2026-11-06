@@ -5,6 +5,7 @@ import httpx
 from fastapi import FastAPI
 
 from app.config import LOG_LEVEL
+from app.store import create_store
 from app.request_logging import RequestLoggingMiddleware
 from app.routes.gmail import router as gmail_router
 from app.routes.root import router as root_router
@@ -24,7 +25,11 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 async def lifespan(app: FastAPI):
     async with httpx.AsyncClient(timeout=30.0) as client:
         app.state.http = client
-        yield
+        app.state.store = await create_store()
+        try:
+            yield
+        finally:
+            await app.state.store.close()
 
 
 app = FastAPI(lifespan=lifespan, title="WhatsApp, Slack & Gmail webhook")

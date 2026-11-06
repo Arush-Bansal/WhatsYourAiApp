@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from agents import RunContextWrapper, function_tool
 
 from app.agent.context import BaseAgentContext, WhatsAppAgentContext
+from app.forms import FORMS, start_form
 from app.images import generate_image
 from app.whatsapp.client import (
     send_image_reply,
@@ -109,3 +110,22 @@ async def generate_and_send_image(
     if ok:
         c.reply_sent = True
     return "ok:image_sent" if ok else "error:image_not_sent"
+
+
+@function_tool
+async def start_form_flow(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    form_id: Annotated[Literal["logo_brief"], "Which form to start."],
+) -> str:
+    """Start a step-by-step form with the user (questions, buttons and lists are sent for you).
+
+    After this returns ok, stop: the form collects the answers itself and you will be re-invoked
+    with the finished answers.
+    """
+    c = wrapper.context
+    if c.store is None or form_id not in FORMS:
+        return "error:form_unavailable"
+    ok = await start_form(c.store, c.http, c.phone_number_id, c.to_wa_id, form_id)
+    if ok:
+        c.reply_sent = True
+    return "ok:form_started" if ok else "error:form_not_started"

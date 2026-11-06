@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Any
@@ -14,8 +15,9 @@ from app.agent import (
 )
 from app.agent.voice_transcribe import transcribe_voice_to_hinglish
 from app.config import VERIFY_TOKEN
-from app.dedupe import already_processed, mark_processed
+from app.forms import Completed, handle_incoming
 from app.security import verify_meta_signature
+from app.store import Store
 from app.whatsapp.client import download_whatsapp_media, send_text_reply
 from app.whatsapp.parser import (
     iter_incoming_button_replies,
@@ -74,104 +76,94 @@ async def receive_webhook(
         raise
 
     # Reply after responding 200: agent turns (esp. image generation) outlast Meta's webhook timeout.
-    background_tasks.add_task(_process_webhook, data, request.app.state.http)
+    background_tasks.add_task(
+        _process_webhook, data, request.app.state.http, request.app.state.store
+    )
     return {"status": "ok"}
 
 
-async def _process_webhook(data: dict[str, Any], http: httpx.AsyncClient) -> None:
+# One user's messages are handled in order, so a fast second message sees the form state of the first.
+_user_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _process_webhook(data: dict[str, Any], http: httpx.AsyncClient, store: Store) -> None:
     try:
-        await _handle_events(data, http)
+        await _handle_events(data, http, store)
     except Exception:
         logger.exception("Webhook processing failed")
 
 
-async def _handle_events(data: dict[str, Any], http: httpx.AsyncClient) -> None:
-    for message_id, from_wa_id, bid, title, phone_number_id in iter_incoming_button_replies(
-        data
-    ):
-        if already_processed(message_id):
-            continue
-        mark_processed(message_id)
-        ctx = WhatsAppAgentContext(
-            http=http,
-            phone_number_id=phone_number_id,
-            to_wa_id=from_wa_id,
-        )
-        prompt = prompt_for_button_reply(bid, title)
-        result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
-        await _dispatch_result(result, http, ctx)
+async def _run_agent(
+    http: httpx.AsyncClient,
+    store: Store,
+    phone_number_id: str,
+    wa_id: str,
+    prompt: str,
+) -> None:
+    ctx = WhatsAppAgentContext(
+        http=http, phone_number_id=phone_number_id, to_wa_id=wa_id, store=store
+    )
+    result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
+    await _dispatch_result(result, http, ctx)
 
-    for (
-        message_id,
-        from_wa_id,
-        row_id,
-        title,
-        description,
-        phone_number_id,
-    ) in iter_incoming_list_replies(data):
-        if already_processed(message_id):
-            continue
-        mark_processed(message_id)
-        ctx = WhatsAppAgentContext(
-            http=http,
-            phone_number_id=phone_number_id,
-            to_wa_id=from_wa_id,
-        )
-        prompt = prompt_for_list_reply(row_id, title, description)
-        result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
-        await _dispatch_result(result, http, ctx)
 
-    for message_id, from_wa_id, text_body, phone_number_id in iter_incoming_text_messages(
-        data
-    ):
-        if already_processed(message_id):
-            continue
-        mark_processed(message_id)
-        ctx = WhatsAppAgentContext(
-            http=http,
-            phone_number_id=phone_number_id,
-            to_wa_id=from_wa_id,
-        )
-        prompt = prompt_for_text_message(text_body)
-        result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
-        await _dispatch_result(result, http, ctx)
+async def _on_user_input(
+    http: httpx.AsyncClient,
+    store: Store,
+    phone_number_id: str,
+    wa_id: str,
+    kind: str,
+    value: str,
+    title: str,
+    agent_prompt: str,
+) -> None:
+    """Give an active form first refusal on the input, otherwise run the agent."""
+    outcome = await handle_incoming(store, http, phone_number_id, wa_id, kind, value, title)  # type: ignore[arg-type]
+    if outcome is True:
+        return
+    if isinstance(outcome, Completed):
+        agent_prompt = outcome.prompt
+    await _run_agent(http, store, phone_number_id, wa_id, agent_prompt)
 
-    for message_id, from_wa_id, media_id, phone_number_id in iter_incoming_voice_notes(
-        data
-    ):
-        if already_processed(message_id):
+
+async def _handle_events(data: dict[str, Any], http: httpx.AsyncClient, store: Store) -> None:
+    # (message_id, wa_id, phone_number_id, kind, value, title, agent_prompt); voice is handled inline.
+    events: list[tuple[str, str, str, str, str, str, str]] = []
+    for mid, wa, bid, title, pn in iter_incoming_button_replies(data):
+        events.append((mid, wa, pn, "button", bid, title, prompt_for_button_reply(bid, title)))
+    for mid, wa, rid, title, desc, pn in iter_incoming_list_replies(data):
+        events.append((mid, wa, pn, "list", rid, title, prompt_for_list_reply(rid, title, desc)))
+    for mid, wa, text, pn in iter_incoming_text_messages(data):
+        events.append((mid, wa, pn, "text", text, "", prompt_for_text_message(text)))
+    voice = list(iter_incoming_voice_notes(data))
+
+    for mid, wa, pn, kind, value, title, agent_prompt in events:
+        if not await store.claim_message(mid):
             continue
-        mark_processed(message_id)
-        ctx = WhatsAppAgentContext(
-            http=http,
-            phone_number_id=phone_number_id,
-            to_wa_id=from_wa_id,
-        )
-        downloaded = await download_whatsapp_media(http, media_id)
-        if downloaded is None:
-            await send_text_reply(
-                http,
-                phone_number_id,
-                from_wa_id,
-                "Sorry, I couldn't download your voice note. Please try again.",
+        async with _user_locks.setdefault(wa, asyncio.Lock()):
+            await _on_user_input(http, store, pn, wa, kind, value, title, agent_prompt)
+
+    for mid, wa, media_id, pn in voice:
+        if not await store.claim_message(mid):
+            continue
+        async with _user_locks.setdefault(wa, asyncio.Lock()):
+            downloaded = await download_whatsapp_media(http, media_id)
+            if downloaded is None:
+                await send_text_reply(
+                    http, pn, wa, "Sorry, I couldn't download your voice note. Please try again."
+                )
+                continue
+            audio_bytes, mime_type = downloaded
+            hinglish = await transcribe_voice_to_hinglish(audio_bytes, mime_type)
+            if hinglish is None:
+                await send_text_reply(
+                    http,
+                    pn,
+                    wa,
+                    "Sorry, I couldn't transcribe your voice note. Please try again or send a text message.",
+                )
+                continue
+            await send_text_reply(http, pn, wa, f"Transcription:\n{hinglish}")
+            await _on_user_input(
+                http, store, pn, wa, "text", hinglish, "", prompt_for_text_message(hinglish)
             )
-            continue
-        audio_bytes, mime_type = downloaded
-        hinglish = await transcribe_voice_to_hinglish(audio_bytes, mime_type)
-        if hinglish is None:
-            await send_text_reply(
-                http,
-                phone_number_id,
-                from_wa_id,
-                "Sorry, I couldn't transcribe your voice note. Please try again or send a text message.",
-            )
-            continue
-        await send_text_reply(
-            http,
-            phone_number_id,
-            from_wa_id,
-            f"Transcription:\n{hinglish}",
-        )
-        prompt = prompt_for_text_message(hinglish)
-        result = await run_whatsapp_turn(context=ctx, user_prompt=prompt)
-        await _dispatch_result(result, http, ctx)

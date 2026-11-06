@@ -15,6 +15,7 @@ from app.agent.tools import (
     send_whatsapp_interactive_buttons,
     send_whatsapp_interactive_list,
     send_whatsapp_text,
+    start_form_flow,
 )
 
 
@@ -58,6 +59,7 @@ def create_whatsapp_agent(*, model: str) -> Agent[WhatsAppAgentContext]:
             send_whatsapp_interactive_buttons,
             send_whatsapp_interactive_list,
             generate_and_send_image,
+            start_form_flow,
         ],
     )
 

@@ -32,3 +32,6 @@ OPENAI_TRANSCRIPTION_ROMANIZE_MODEL = os.getenv(
 )
 
 OPENAI_IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2")
+
+# Postgres connection string for the bot's own role (Supabase pooler). Empty = in-memory state.
+DATABASE_URL = os.getenv("DATABASE_URL", "")

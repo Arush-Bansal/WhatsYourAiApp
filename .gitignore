@@ -6,3 +6,5 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
+supabase/.temp/
+supabase/.branches/
