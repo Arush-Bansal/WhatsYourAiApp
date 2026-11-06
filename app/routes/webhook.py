@@ -213,7 +213,6 @@ async def _handle_events(data: dict[str, Any], http: httpx.AsyncClient, store: S
                 http, pn, wa, "Sorry, I couldn't transcribe your voice note. Please try again or send a text message."
             )
             continue
-        await send_text_reply(http, pn, wa, f"Transcription:\n{hinglish}")
         await _on_user_input(
             http, store, pn, wa, "text", hinglish, "", Item(prompt_for_text_message(hinglish), message_id=mid)
         )
