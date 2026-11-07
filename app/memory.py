@@ -57,13 +57,31 @@ def render_card(brand: Brand) -> str:
     return "\n".join(lines)
 
 
-def build_memory_block(brand: Brand, brands: list[Brand], session_summary: str, past: list[str]) -> str:
+def render_session(session: ChatSession) -> str:
+    lines = [f"This session: mode={session.mode}"]
+    if session.goal:
+        lines.append(f"Goal: {session.goal}")
+    if session.plan:
+        lines.append("Agreed flow:")
+        lines += [f"{i}. {p}" for i, p in enumerate(session.plan, 1)]
+    return "\n".join(lines)
+
+
+def build_memory_block(
+    brand: Brand,
+    brands: list[Brand],
+    session_summary: str,
+    past: list[str],
+    session: ChatSession | None = None,
+) -> str:
     parts = ["Saved memory (trust it; do not re-ask what is here):", render_card(brand)]
     others = [b.name for b in brands if b.id != brand.id]
     if others:
         parts.append("Other brands this user has: " + ", ".join(others))
     if past:
         parts.append("Earlier sessions on this brand:\n" + "\n".join(f"- {s}" for s in past))
+    if session is not None and (session.goal or session.plan or session.mode != "explore"):
+        parts.append(render_session(session))
     if session_summary:
         parts.append("Earlier in this session:\n" + session_summary)
     return "\n\n".join(parts)
@@ -151,8 +169,30 @@ async def prepare_turn(store: Store, wa_id: str) -> TurnContext:
 
     recent = pick_recent(msgs, RECENT_BUDGET)
     past = await store.brand_summaries(brand.id, session.id, PAST_SESSIONS)
-    block = build_memory_block(brand, await store.list_brands(wa_id), session.summary, past)
+    block = build_memory_block(brand, await store.list_brands(wa_id), session.summary, past, session)
     return TurnContext(brand, session, block, [{"role": m.role, "content": m.content} for m in recent])
+
+
+async def wrap_current_session(store: Store, wa_id: str) -> ChatSession | None:
+    """Summarise and close the open session so the next turn is a new one.
+
+    Does not create a session if none is open.
+    """
+    open_list = await store.unsummarised_sessions(wa_id, exclude_id=0)
+    if not open_list:
+        return None
+    session = max(open_list, key=lambda s: s.id)
+    brand = await store.active_brand(wa_id)
+    msgs = [m for m in await store.session_messages(session.id) if not m.compacted]
+    if len(msgs) >= 2:
+        card = brand.card if brand.id == session.brand_id else {}
+        summary, patch = await summarise(session.summary, msgs, card)
+        if patch:
+            await store.update_brand(session.brand_id, None, patch)
+        await store.set_session_summary(session.id, summary, closed=True)
+    elif not session.summarised:
+        await store.set_session_summary(session.id, session.summary, closed=True)
+    return session
 
 
 async def _fresh(store: Store, wa_id: str, brand_id: int) -> Brand | None:

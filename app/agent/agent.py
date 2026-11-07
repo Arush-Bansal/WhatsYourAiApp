@@ -20,6 +20,8 @@ from app.agent.tools import (
     create_brand,
     switch_brand,
     update_brand_card,
+    propose_plan,
+    set_session,
 )
 
 
@@ -68,6 +70,8 @@ def create_whatsapp_agent(*, model: str) -> Agent[WhatsAppAgentContext]:
             update_brand_card,
             create_brand,
             switch_brand,
+            propose_plan,
+            set_session,
         ],
     )
 

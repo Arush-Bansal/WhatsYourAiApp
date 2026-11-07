@@ -35,6 +35,9 @@ class Brand:
     card: dict[str, str] = field(default_factory=dict)
 
 
+SESSION_MODES = ("plan", "execute", "critique", "explore")
+
+
 @dataclass
 class ChatSession:
     id: int
@@ -42,6 +45,9 @@ class ChatSession:
     brand_id: int
     summary: str = ""
     summarised: bool = False
+    goal: str = ""
+    mode: str = "explore"
+    plan: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -81,6 +87,17 @@ class Store(Protocol):
 
     async def append_message(self, wa_id: str, role: str, content: str, session_id: int | None = None) -> None: ...
     async def session_messages(self, session_id: int) -> list[Msg]: ...
+    async def get_session(self, session_id: int) -> ChatSession | None: ...
+    async def update_session(
+        self,
+        session_id: int,
+        *,
+        goal: str | None = None,
+        mode: str | None = None,
+        plan: list[str] | None = None,
+    ) -> ChatSession: ...
+    async def force_new_session(self, wa_id: str, brand_id: int) -> ChatSession:
+        """Close the open session (no new messages) and open a fresh one."""
 
     async def close(self) -> None: ...
 
@@ -202,6 +219,38 @@ class MemoryStore:
     async def session_messages(self, session_id: int) -> list[Msg]:
         return list(self._msgs.get(session_id, []))
 
+    async def get_session(self, session_id: int) -> ChatSession | None:
+        item = self._sessions.get(session_id)
+        return item[0] if item else None
+
+    async def update_session(
+        self,
+        session_id: int,
+        *,
+        goal: str | None = None,
+        mode: str | None = None,
+        plan: list[str] | None = None,
+    ) -> ChatSession:
+        session, touched = self._sessions[session_id]
+        if goal is not None:
+            session.goal = goal.strip()
+        if mode is not None:
+            session.mode = mode if mode in SESSION_MODES else session.mode
+        if plan is not None:
+            session.plan = [p.strip() for p in plan if p and p.strip()][:9]
+        self._sessions[session_id] = (session, touched)
+        return session
+
+    async def force_new_session(self, wa_id: str, brand_id: int) -> ChatSession:
+        now = datetime.now(timezone.utc)
+        mine = [(s, t) for s, t in self._sessions.values() if s.wa_id == wa_id and not s.summarised]
+        for session, touched in mine:
+            session.summarised = True
+            self._sessions[session.id] = (session, touched)
+        session = ChatSession(self._next(), wa_id, brand_id)
+        self._sessions[session.id] = (session, now)
+        return session
+
     async def close(self) -> None:
         return None
 
@@ -225,6 +274,24 @@ def _merge_card(card: dict[str, str], patch: dict[str, str]) -> None:
             card[key] = value
         else:
             card.pop(key, None)
+
+
+def _session_from_row(row: Any) -> ChatSession:
+    plan: Any = row["plan"] if "plan" in row.keys() else []
+    if isinstance(plan, str):
+        plan = json.loads(plan)
+    if not isinstance(plan, list):
+        plan = []
+    return ChatSession(
+        row["id"],
+        row["wa_id"],
+        row["brand_id"],
+        row["summary"] or "",
+        bool(row["summarised"]),
+        row["goal"] if "goal" in row.keys() else "",
+        row["mode"] if "mode" in row.keys() else "explore",
+        [str(p) for p in plan],
+    )
 
 
 def _brand_from_row(row: Any) -> Brand:
@@ -344,28 +411,27 @@ class PgStore:
             "update wa_agent.sessions set last_at = now() where id = ("
             "select id from wa_agent.sessions where wa_id = $1 and brand_id = $2 and not summarised "
             "and last_at > now() - make_interval(secs => $3) order by id desc limit 1) "
-            "returning id, wa_id, brand_id, summary, summarised",
+            "returning *",
             wa_id,
             brand_id,
             SESSION_GAP.total_seconds(),
         )
         if row is None:
             row = await self._pool.fetchrow(
-                "insert into wa_agent.sessions (wa_id, brand_id) values ($1, $2) "
-                "returning id, wa_id, brand_id, summary, summarised",
+                "insert into wa_agent.sessions (wa_id, brand_id) values ($1, $2) returning *",
                 wa_id,
                 brand_id,
             )
-        return ChatSession(row["id"], row["wa_id"], row["brand_id"], row["summary"], row["summarised"])
+        return _session_from_row(row)
 
     async def unsummarised_sessions(self, wa_id: str, exclude_id: int) -> list[ChatSession]:
         rows = await self._pool.fetch(
-            "select id, wa_id, brand_id, summary, summarised from wa_agent.sessions "
+            "select * from wa_agent.sessions "
             "where wa_id = $1 and id <> $2 and not summarised order by id limit 10",
             wa_id,
             exclude_id,
         )
-        return [ChatSession(r["id"], r["wa_id"], r["brand_id"], r["summary"], r["summarised"]) for r in rows]
+        return [_session_from_row(r) for r in rows]
 
     async def brand_summaries(self, brand_id: int, exclude_id: int, limit: int) -> list[str]:
         rows = await self._pool.fetch(
@@ -409,6 +475,50 @@ class PgStore:
             session_id,
         )
         return [Msg(r["id"], r["role"], r["content"], r["compacted"]) for r in rows]
+
+    async def get_session(self, session_id: int) -> ChatSession | None:
+        row = await self._pool.fetchrow("select * from wa_agent.sessions where id = $1", session_id)
+        return _session_from_row(row) if row else None
+
+    async def update_session(
+        self,
+        session_id: int,
+        *,
+        goal: str | None = None,
+        mode: str | None = None,
+        plan: list[str] | None = None,
+    ) -> ChatSession:
+        session = await self.get_session(session_id)
+        if session is None:
+            raise KeyError(session_id)
+        if goal is not None:
+            session.goal = goal.strip()
+        if mode is not None and mode in SESSION_MODES:
+            session.mode = mode
+        if plan is not None:
+            session.plan = [p.strip() for p in plan if p and p.strip()][:9]
+        row = await self._pool.fetchrow(
+            "update wa_agent.sessions set goal = $2, mode = $3, plan = $4::jsonb, last_at = now() "
+            "where id = $1 returning *",
+            session_id,
+            session.goal,
+            session.mode,
+            json.dumps(session.plan),
+        )
+        return _session_from_row(row)
+
+    async def force_new_session(self, wa_id: str, brand_id: int) -> ChatSession:
+        await self._pool.execute(
+            "update wa_agent.sessions set summarised = true, last_at = now() "
+            "where wa_id = $1 and not summarised",
+            wa_id,
+        )
+        row = await self._pool.fetchrow(
+            "insert into wa_agent.sessions (wa_id, brand_id) values ($1, $2) returning *",
+            wa_id,
+            brand_id,
+        )
+        return _session_from_row(row)
 
     async def close(self) -> None:
         await self._pool.close()

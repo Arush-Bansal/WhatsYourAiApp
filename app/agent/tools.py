@@ -5,9 +5,11 @@ from typing import Annotated, Literal
 from agents import RunContextWrapper, function_tool
 
 from app.agent.context import BaseAgentContext, WhatsAppAgentContext
+from app.agent.plan import MAX_POINTERS, MIN_POINTERS, normalise_pointers, plan_buttons_payload
 from app.audio import synthesize_speech
 from app.forms import FORMS, start_form
 from app.memory import CARD_FIELDS
+from app.store import SESSION_MODES
 from app.images import generate_image
 from app.whatsapp.client import (
     send_audio_reply,
@@ -234,3 +236,49 @@ async def switch_brand(
         return f"error:not_found; the user's brands are: {names}"
     c.brand_id = brand.id
     return f"ok:active:{brand.name}"
+
+
+@function_tool
+async def propose_plan(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    goal: Annotated[str, "One line: what this session is trying to get done."],
+    pointers: Annotated[
+        list[str],
+        "1–9 short pointers outlining the process (what happens, in order). Relatable, not jargon. "
+        "Do not pad to 9; match the job.",
+    ],
+) -> str:
+    """Send PlanSkill: a numbered flow outline plus Go / Change plan / Just do it. Then stop and wait."""
+    c = wrapper.context
+    steps = normalise_pointers(pointers)
+    if len(steps) < MIN_POINTERS:
+        return "error:need_pointers"
+    if len(steps) > MAX_POINTERS:
+        steps = steps[:MAX_POINTERS]
+    if c.store is not None and c.session_id is not None:
+        await c.store.update_session(c.session_id, goal=goal, mode="plan", plan=steps)
+    payload = plan_buttons_payload(goal, steps)
+    ok = await send_interactive_buttons_reply(c.http, c.phone_number_id, c.to_wa_id, payload)
+    if ok:
+        c.reply_sent = True
+        await record_assistant(c, payload.body_text)
+    return "ok:plan_sent" if ok else "error:plan_not_sent"
+
+
+@function_tool
+async def set_session(
+    wrapper: RunContextWrapper[WhatsAppAgentContext],
+    goal: Annotated[str | None, "Update this session's goal."] = None,
+    mode: Annotated[
+        Literal["plan", "execute", "critique", "explore"] | None,
+        "plan = waiting on the outline; execute = doing it; critique = review; explore = open chat.",
+    ] = None,
+) -> str:
+    """Set this session's goal or mode without messaging the user."""
+    c = wrapper.context
+    if c.store is None or c.session_id is None:
+        return "error:no_session"
+    if mode is not None and mode not in SESSION_MODES:
+        return "error:bad_mode"
+    session = await c.store.update_session(c.session_id, goal=goal, mode=mode)
+    return f"ok:mode={session.mode}"

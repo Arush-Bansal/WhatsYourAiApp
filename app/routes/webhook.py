@@ -14,11 +14,13 @@ from app.agent import (
     prompt_for_text_message,
     run_whatsapp_turn,
 )
+from app.agent.plan import PLAN_BUTTON_IDS, PLAN_EDIT, PLAN_GO, PLAN_SKIP, prompt_for_plan_tap
 from app.agent.voice_transcribe import transcribe_voice_to_hinglish
 from app.batching import Item, batcher
 from app.config import VERIFY_TOKEN
 from app.forms import Completed, handle_incoming
 from app.security import verify_meta_signature
+from app.session_flow import is_new_session_command, is_wrap_command, start_new, wrap_up
 from app.store import Store
 from app.whatsapp.client import download_whatsapp_media, send_text_reply, send_typing_indicator
 from app.whatsapp.parser import (
@@ -160,10 +162,40 @@ async def _on_user_input(
             await _run_agent(http, store, phone_number_id, wa_id, outcome.prompt)
             return
 
+        if kind == "text" and is_wrap_command(value):
+            body = await wrap_up(store, wa_id)
+            await send_text_reply(http, phone_number_id, wa_id, body)
+            return
+        if kind == "text" and is_new_session_command(value):
+            body = await start_new(store, wa_id)
+            await send_text_reply(http, phone_number_id, wa_id, body)
+            return
+        if kind == "button" and value in PLAN_BUTTON_IDS:
+            await _handle_plan_tap(http, store, phone_number_id, wa_id, value)
+            return
+
     async def runner(wa: str, pn: str, items: list[Item]) -> None:
         await _run_batch(http, store, wa, pn, items)
 
     batcher.add(wa_id, phone_number_id, item, runner)
+
+
+async def _handle_plan_tap(
+    http: httpx.AsyncClient,
+    store: Store,
+    phone_number_id: str,
+    wa_id: str,
+    button_id: str,
+) -> None:
+    brand = await store.active_brand(wa_id)
+    session = await store.open_session(wa_id, brand.id)
+    if button_id in (PLAN_GO, PLAN_SKIP):
+        await store.update_session(session.id, mode="execute")
+    elif button_id == PLAN_EDIT:
+        await store.update_session(session.id, mode="plan")
+    session = await store.get_session(session.id) or session
+    prompt = prompt_for_plan_tap(button_id, session.plan, session.goal)
+    await _run_agent(http, store, phone_number_id, wa_id, prompt)
 
 
 def _attachment_item(
