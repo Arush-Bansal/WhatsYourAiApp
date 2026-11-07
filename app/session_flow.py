@@ -8,8 +8,9 @@ import re
 from app.memory import wrap_current_session
 from app.store import Store
 
-NEW_SESSION_WORDS = {"new session", "start session", "start over", "fresh session"}
+NEW_SESSION_WORDS = {"new session", "start session", "start over", "fresh session", "new chat"}
 WRAP_WORDS = {"wrap up", "end session", "close session", "that's all", "thats all"}
+WRAP_PREFIXES = ("wrap up", "end session", "close session")
 
 
 def _norm(text: str) -> str:
@@ -21,6 +22,10 @@ _SESSION_NOUNS = ["session", "chat", "conversation"]
 
 def _is_session_word(word: str) -> bool:
     return bool(difflib.get_close_matches(word, _SESSION_NOUNS, n=1, cutoff=0.75))
+
+
+def _starts_with_any(text: str, prefixes: tuple[str, ...]) -> bool:
+    return any(text == p or text.startswith(p + " ") for p in prefixes)
 
 
 def is_new_session_command(text: str) -> bool:
@@ -38,7 +43,8 @@ def is_new_session_command(text: str) -> bool:
 
 
 def is_wrap_command(text: str) -> bool:
-    return _norm(text) in WRAP_WORDS
+    n = _norm(text)
+    return n in WRAP_WORDS or _starts_with_any(n, WRAP_PREFIXES)
 
 
 async def wrap_up(store: Store, wa_id: str) -> str:

@@ -56,6 +56,8 @@ async def test_wrap_and_new_session_commands(monkeypatch):
 
     monkeypatch.setattr("app.memory.summarise", fake_summarise)
     assert is_wrap_command("Wrap up") and is_new_session_command("new session")
+    assert is_new_session_command("new session pleaes") and is_new_session_command("New session please")
+    assert not is_new_session_command("hello")
     s = MemoryStore()
     first = await s.open_session("91", (await s.active_brand("91")).id)
     await s.append_message("91", "user", "hi", first.id)
