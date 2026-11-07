@@ -98,4 +98,6 @@ def test_new_session_phrases():
     from app.session_flow import is_new_session_command
 
     assert is_new_session_command("heeyyy new session please") and is_new_session_command("start over")
+    assert is_new_session_command("new sessoin please") and is_new_session_command("new seesion") and is_new_session_command("new chat")
+    assert not is_new_session_command("I want a new logo") and not is_new_session_command("new shoes brand")
     assert not is_new_session_command("a coffee brand for people who want a fresh start in the morning every day")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 
 from app.memory import wrap_current_session
@@ -15,13 +16,25 @@ def _norm(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
-NEW_SESSION_RE = re.compile(r"\b(new (session|chat|conversation)|start (over|again)|fresh start)\b")
+_SESSION_NOUNS = ["session", "chat", "conversation"]
+
+
+def _is_session_word(word: str) -> bool:
+    return bool(difflib.get_close_matches(word, _SESSION_NOUNS, n=1, cutoff=0.75))
 
 
 def is_new_session_command(text: str) -> bool:
-    """Exact commands, or a short message like 'heey new session please' (long messages are not commands)."""
+    """Exact commands, or a short message like 'heey new sessoin please' (typos tolerated;
+    long messages are never commands)."""
     t = _norm(text)
-    return t in NEW_SESSION_WORDS or (len(t) <= 40 and bool(NEW_SESSION_RE.search(t)))
+    if t in NEW_SESSION_WORDS:
+        return True
+    if len(t) > 40:
+        return False
+    if re.search(r"\b(start (over|again)|fresh start)\b", t):
+        return True
+    words = re.findall(r"[a-z]+", t)
+    return any(w == "new" and i + 1 < len(words) and _is_session_word(words[i + 1]) for i, w in enumerate(words))
 
 
 def is_wrap_command(text: str) -> bool:
