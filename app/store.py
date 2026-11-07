@@ -14,7 +14,7 @@ from app.config import DATABASE_URL, PROCESSED_IDS_MAX
 
 logger = logging.getLogger(__name__)
 
-FORM_SESSION_TTL = timedelta(hours=24)
+FORM_SESSION_TTL = timedelta(hours=3)
 SESSION_GAP = timedelta(minutes=30)  # a longer silence starts a new chat session
 DEFAULT_BRAND_NAME = "My brand"
 

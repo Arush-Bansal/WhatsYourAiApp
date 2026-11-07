@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from app.memory import wrap_current_session
 from app.store import Store
 
@@ -13,8 +15,13 @@ def _norm(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
+NEW_SESSION_RE = re.compile(r"\b(new (session|chat|conversation)|start (over|again)|fresh start)\b")
+
+
 def is_new_session_command(text: str) -> bool:
-    return _norm(text) in NEW_SESSION_WORDS
+    """Exact commands, or a short message like 'heey new session please' (long messages are not commands)."""
+    t = _norm(text)
+    return t in NEW_SESSION_WORDS or (len(t) <= 40 and bool(NEW_SESSION_RE.search(t)))
 
 
 def is_wrap_command(text: str) -> bool:

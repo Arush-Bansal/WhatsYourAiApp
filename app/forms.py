@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -119,7 +120,21 @@ FORMS: dict[str, Form] = {
     ),
 }
 
-CANCEL_WORDS = {"cancel", "stop", "exit", "quit"}
+CANCEL_WORDS = {"cancel", "stop", "exit", "quit", "menu", "back"}
+MAX_NUDGES = 2  # unmatched replies on a button/list step before we let the form go
+
+
+def _match_option(step: Step, text: str) -> Option | None:
+    t = re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
+    if not t:
+        return None
+    for o in step.options:
+        if t in (o.id.lower(), re.sub(r"[^a-z0-9 ]", "", o.title.lower()).strip()):
+            return o
+    for o in step.options:
+        if t in re.sub(r"[^a-z0-9 ]", "", o.title.lower()):
+            return o
+    return None
 SKIP_WORDS = {"skip", "-"}
 
 
@@ -254,18 +269,32 @@ async def handle_incoming(
             answer = text
     else:
         if kind == "text":
-            await send_text_reply(http, phone_number_id, wa_id, "Please tap one of the options below.")
-            await _send_step(http, phone_number_id, wa_id, form, session.step)
-            return True
-        prefix = f"{ID_PREFIX}{step.key}:"
-        if not value.startswith(prefix):
-            return False  # tap from an unrelated message
-        answer = title or value.removeprefix(prefix)
+            option = _match_option(step, value)
+            if option is not None:
+                answer = option.title  # typed the option instead of tapping it
+            else:
+                nudges = int(session.answers.get("_nudges", "0")) + 1
+                if nudges > MAX_NUDGES:
+                    await store.clear_form_session(wa_id)  # don't trap the user; the agent takes over
+                    return False
+                session.answers["_nudges"] = str(nudges)
+                await store.save_form_session(session)
+                await send_text_reply(
+                    http, phone_number_id, wa_id, "Tap one of the options below, or type *cancel* to stop the questions."
+                )
+                await _send_step(http, phone_number_id, wa_id, form, session.step)
+                return True
+        else:
+            prefix = f"{ID_PREFIX}{step.key}:"
+            if not value.startswith(prefix):
+                return False  # tap from an unrelated message
+            answer = title or value.removeprefix(prefix)
 
     if answer is None:
         await send_text_reply(http, phone_number_id, wa_id, "I didn't catch that - please send a text answer.")
         return True
 
+    session.answers.pop("_nudges", None)
     if answer:
         session.answers[step.key] = answer
     session.step += 1

@@ -74,3 +74,28 @@ async def test_new_session_is_not_a_form_answer(sent):
 async def test_claim_message_dedupes():
     store = MemoryStore()
     assert await store.claim_message("m1") and not await store.claim_message("m1")
+
+
+@pytest.mark.asyncio
+async def test_typed_option_is_accepted_and_form_is_never_a_trap(sent):
+    store = MemoryStore()
+    await forms.start_form(store, None, "pn", "91", "logo_brief")
+    async def say(kind, value, title=""):
+        return await forms.handle_incoming(store, None, "pn", "91", kind, value, title)
+    for text in ("Brew Lab",):
+        await say("text", text)
+    assert await say("text", "tech") is True  # typed the industry instead of tapping
+    assert (await store.get_form_session("91")).step == 2
+    await say("text", "students"); await say("text", "cheaper")
+    # touchpoints step (list): gibberish nudges twice, then releases the user to the agent
+    assert await say("text", "hello") is True
+    assert await say("text", "hello again") is True
+    assert await say("text", "hello???") is False
+    assert await store.get_form_session("91") is None
+
+
+def test_new_session_phrases():
+    from app.session_flow import is_new_session_command
+
+    assert is_new_session_command("heeyyy new session please") and is_new_session_command("start over")
+    assert not is_new_session_command("a coffee brand for people who want a fresh start in the morning every day")
