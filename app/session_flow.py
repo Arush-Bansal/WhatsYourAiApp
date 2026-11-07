@@ -22,11 +22,13 @@ def is_wrap_command(text: str) -> bool:
 
 
 async def wrap_up(store: Store, wa_id: str) -> str:
+    await store.clear_form_session(wa_id)
     await wrap_current_session(store, wa_id)
     return "Wrapped this session. Next message starts a new one — I'll keep the brand card."
 
 
 async def start_new(store: Store, wa_id: str) -> str:
+    await store.clear_form_session(wa_id)
     await wrap_current_session(store, wa_id)
     brand = await store.active_brand(wa_id)
     await store.force_new_session(wa_id, brand.id)

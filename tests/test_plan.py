@@ -11,7 +11,7 @@ from app.agent.plan import (
 )
 from app.memory import build_memory_block
 from app.session_flow import is_new_session_command, is_wrap_command, start_new, wrap_up
-from app.store import MemoryStore
+from app.store import FormSession, MemoryStore
 
 
 def test_pointers_cap_at_nine():
@@ -67,3 +67,12 @@ async def test_wrap_and_new_session_commands(monkeypatch):
     brand = await s.active_brand("91")
     nxt = await s.open_session("91", brand.id)
     assert nxt.id != first.id and not nxt.summarised
+
+
+@pytest.mark.asyncio
+async def test_new_session_drops_active_form():
+    s = MemoryStore()
+    await s.save_form_session(FormSession(wa_id="91", form_id="logo_brief", step=4))
+    assert await s.get_form_session("91") is not None
+    await start_new(s, "91")
+    assert await s.get_form_session("91") is None

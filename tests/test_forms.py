@@ -63,6 +63,14 @@ async def test_cancel_and_stale_button(sent):
 
 
 @pytest.mark.asyncio
+async def test_new_session_is_not_a_form_answer(sent):
+    store = MemoryStore()
+    await forms.start_form(store, None, "pn", "91", "logo_brief")
+    assert await forms.handle_incoming(store, None, "pn", "91", "text", "new session") is False
+    assert await store.get_form_session("91") is not None
+
+
+@pytest.mark.asyncio
 async def test_claim_message_dedupes():
     store = MemoryStore()
     assert await store.claim_message("m1") and not await store.claim_message("m1")

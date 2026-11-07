@@ -8,6 +8,7 @@ from typing import Literal
 
 import httpx
 
+from app.session_flow import is_new_session_command, is_wrap_command
 from app.store import DEFAULT_BRAND_NAME, FormSession, Store
 from app.whatsapp.client import (
     send_interactive_buttons_reply,
@@ -235,6 +236,8 @@ async def handle_incoming(
         return False
     step = form.steps[session.step]
 
+    if kind == "text" and (is_new_session_command(value) or is_wrap_command(value)):
+        return False
     if kind == "text" and value.strip().lower() in CANCEL_WORDS:
         await store.clear_form_session(wa_id)
         await send_text_reply(http, phone_number_id, wa_id, "Okay, cancelled. Tell me whenever you want to pick it up again.")

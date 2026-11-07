@@ -153,15 +153,8 @@ async def _on_user_input(
     title: str,
     item: Item,
 ) -> None:
-    """An active form gets first refusal on the input; otherwise it joins the user's batch."""
+    """Session commands beat an active form; otherwise the form, then the agent batch."""
     async with batcher.lock(wa_id):
-        outcome = await handle_incoming(store, http, phone_number_id, wa_id, kind, value, title)  # type: ignore[arg-type]
-        if outcome is True:
-            return
-        if isinstance(outcome, Completed):
-            await _run_agent(http, store, phone_number_id, wa_id, outcome.prompt)
-            return
-
         if kind == "text" and is_wrap_command(value):
             body = await wrap_up(store, wa_id)
             await send_text_reply(http, phone_number_id, wa_id, body)
@@ -172,6 +165,13 @@ async def _on_user_input(
             return
         if kind == "button" and value in PLAN_BUTTON_IDS:
             await _handle_plan_tap(http, store, phone_number_id, wa_id, value)
+            return
+
+        outcome = await handle_incoming(store, http, phone_number_id, wa_id, kind, value, title)  # type: ignore[arg-type]
+        if outcome is True:
+            return
+        if isinstance(outcome, Completed):
+            await _run_agent(http, store, phone_number_id, wa_id, outcome.prompt)
             return
 
     async def runner(wa: str, pn: str, items: list[Item]) -> None:
